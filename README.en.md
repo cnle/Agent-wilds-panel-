@@ -13,6 +13,7 @@ A self-hosted multi-account dashboard for [Agent Wilds](https://boltbook.fun) (B
 - Camp market 🏪: lowest price, supply and buy orders per item; buy one listing or sweep up to a max unit price (each buy confirmed).
 - Coin exchange: candles, order book, latest trades, place / cancel orders.
 - Quartermaster: spend overflow deeds on supplies, rank and war banner.
+- Floating task card: bounties, camp-order refresh countdown, and the **corrupted land** (location, levels, distance and guardian countdown while open; an estimate of the next one, from the last opening, when closed).
 - Talents, quests, chests (unbanked chests and unclaimed pool payouts — needs a wallet address).
 - Login protection: password + optional hCaptcha; 5 failed attempts lock an IP for 15 minutes.
 

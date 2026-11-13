@@ -112,6 +112,26 @@ def pool_info(acct):
     if time.time() - t > 120 and acct not in POOL_BUSY:
         POOL_BUSY.add(acct); threading.Thread(target=_pool_fill, args=(acct,), daemon=True).start()
     return v
+CL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cl_state.json")
+try: CL_LAST = json.load(open(CL_PATH))
+except Exception: CL_LAST = {}
+def _ts(v):
+    if v is None: return None
+    if isinstance(v, (int, float)): return v / 1000 if v > 1e12 else float(v)
+    try:
+        import datetime as _d
+        return _d.datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+    except Exception: return None
+def cl_note(cl):  # corrupted land: remember when the last one opened, to estimate the next (every 2 h)
+    global CL_LAST
+    if not isinstance(cl, dict): return
+    e = _ts(cl.get("ends_at"))
+    if not e: return
+    st = e - (20 * 60 if cl.get("phase") == "open" else 35 * 60)
+    if abs(st - (CL_LAST.get("start") or 0)) > 90 and st > (CL_LAST.get("start") or 0) - 600:
+        CL_LAST = {"start": st, "ring": cl.get("ring"), "levels": cl.get("levels")}
+        try: json.dump(CL_LAST, open(CL_PATH, "w"))
+        except Exception: pass
 def slim_me(m):
     keys = ["name", "level", "xp", "xp_next", "hp", "max_hp", "ap", "ap_max", "next_ap_at", "coins", "power",
             "squad_power", "gear_score", "worn", "bag", "gear_bag", "gear_bag_max", "stash", "stash_max", "currencies",
@@ -127,6 +147,8 @@ def slim_me(m):
     o["bounties"] = m.get("bounties") or []; o["camp_orders"] = m.get("camp_orders") or []
     pz = m.get("prize") or {}
     o["chest"] = pz.get("chest"); o["chest_since"] = pz.get("chest_since"); o["run_from"] = pz.get("run_from")
+    cl = m.get("corrupted_land"); cl_note(cl)
+    o["corrupted"] = dict(cl, ends_ts=_ts(cl.get("ends_at"))) if isinstance(cl, dict) else None; o["cl_last"] = CL_LAST or None
     o["deeds_today"] = pz.get("deeds_today"); o["deeds_cap"] = pz.get("deeds_cap") or (m.get("hero") or {}).get("deeds_cap"); o["deeds_banked"] = pz.get("deeds_banked")
     return o
 
@@ -534,6 +556,23 @@ function renderPz(s){const el=$('pzc');if(!el||!s)return;if(s.chest||s.pool)PZC[
  el.innerHTML=h;const hid=!!localStorage.pzHid;el.classList.toggle('hid',hid);$('pzt').style.display=hid?'block':'none';tkPos()}addEventListener('scroll',tkPos,{passive:true});addEventListener('resize',tkPos);
 setInterval(()=>{if(ST)renderTk(ST)},30000);
 function tkShow(v){localStorage.tkHid=v?'':'1';$('tkc').classList.toggle('hid',!v);$('tkt').style.display=v?'none':'block';tkPos()}
+function clFmt(sec){sec=Math.max(0,Math.round(sec));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),x=sec%60;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(x).padStart(2,'0')}
+function clHm(t){const b=new Date(t*1000+8*3600e3);return String(b.getUTCHours()).padStart(2,'0')+':'+String(b.getUTCMinutes()).padStart(2,'0')}
+let CLT=null;
+function clHtml(s){const c=s.corrupted,L=s.cl_last;CLT=null;let h=`<h5 style="margin-top:8px"><span>🟣 腐化之地</span></h5>`;
+ if(c&&c.ends_ts){const lv=(c.levels||[]).join('–');const ds=(s.x!=null&&c.x!=null)?Math.round(Math.hypot(s.x-c.x,s.y-c.y)):null;
+  const fit=c.levels&&s.level!=null?(s.level<c.levels[0]-2?'<span class=pd>等级偏低</span>':s.level>c.levels[1]+8?'<span class=dim>怪物偏弱</span>':'<span class=ok>适合</span>'):'';
+  const g=c.phase=='guardian';CLT={t:c.ends_ts,g:g?2:1};
+  h+=`<div class=tr><span>${g?'守卫已现':'开启中'} · ${RINGZ[c.ring]||c.ring||''} (${c.x},${c.y})</span><span>${fit}</span></div>`;
+  h+=`<div class=tr><span class=dim>Lv${lv}${ds!=null?' · 距你 '+ds+' 格':''}</span><span style="color:#c9a0ff">${g?'守卫剩':'守卫出现'} <b id=clcd style="font-weight:normal">${clFmt(c.ends_ts-Date.now()/1000)}</b></span></div>`;
+  h+=`<div class=dim style="font-size:11px">${g?'守卫宝箱按伤害分配，打出一成以上可得装备':'怪物三成是精英，经验 1.5 倍；进入前确认血量'}</div>`;
+ }else if(L&&L.start){let n=L.start+7200;const now=Date.now()/1000;while(n<now-35*60)n+=7200;
+  if(n<=now){h+=`<div class=tr><span>可能已开启（约 ${clHm(n)}）</span><span class=dim>刷新后显示位置</span></div>`}
+  else{CLT={t:n,g:0};h+=`<div class=tr><span>下次约 ${clHm(n)}</span><span style="color:#c9a0ff">还剩 <b id=clcd style="font-weight:normal">${clFmt(n-now)}</b></span></div>`}
+  h+=`<div class=dim style="font-size:11px">每 2 小时一轮（开 20 分钟 + 守卫 15 分钟），时间按上次开启推算</div>`;
+ }else h+='<div class=dim>暂未观测到，开启时会显示位置与倒计时</div>';
+ return h}
+setInterval(()=>{const e=$('clcd');if(!e||!CLT)return;const r=CLT.t-Date.now()/1000;if(r<=0){e.textContent='0:00';if(!CLT.done){CLT.done=1;setTimeout(()=>{if(typeof refreshState=='function')refreshState()},3000)}}else e.textContent=clFmt(r)},1000);
 function renderTk(s){const el=$('tkc');if(!el||!s)return;const B=s.bounties||[],O=s.camp_orders||[];const KZ={kill:'击杀怪物',elite:'击杀精英',orders:'完成订单'};
  const bd=B.filter(b=>b.done>=b.n).length;
  let h=`<h5><span>📜 悬赏 ${bd}/${B.length} 完成</span><span class=x title="隐藏到左边" onclick="tkShow(0)">‹</span></h5>`;
@@ -546,6 +585,7 @@ function renderTk(s){const el=$('tkc');if(!el||!s)return;const B=s.bounties||[],
  h+=`<h5 style="margin-top:8px"><span>📦 营地订单</span></h5>`+(et&&O.length?`<div style="margin:-2px 0 4px;color:#9fd3ff">🔄 下次刷新 ${et}（还剩 ${left}）· 每 2 小时一轮</div>`:'');
  h+=O.map(o=>{const nm=GN[o.goods]||ZH[o.goods]||o.goods;const mine=o.share-(o.yours_left??o.share);const st=o.done?'<span class=ok>已满</span>':o.closed?'<span class=dim>本轮已交别单</span>':(o.yours_left===0?'<span class=ok>我已交满</span>':`我 ${mine}/${o.share}`);
   return `<div class=tr><span>${nm} 全服 ${o.qty-o.left}/${o.qty}</span><span>${st}</span></div><div class=dim style="font-size:11px;margin:-2px 0 3px">交满奖励 ${o.xp} 经验 · ${o.coins} 金币</div>`}).join('')||'<div class=dim>无订单（需在玩英雄）</div>';
+ h+=clHtml(s);
  el.innerHTML=h;tkPos();const hid=!!localStorage.tkHid;el.classList.toggle('hid',hid);$('tkt').style.display=hid?'block':'none'}
 function render(){const s=ST;renderTk(s);renderPz(s);if(!s||s.error){$('hero').textContent=JSON.stringify(s);return}
  const hh=s.hero||{},hg=hh.grade||(hh.kind=='demon_lord'?'lord':''),hn=hh.kind=='demon_lord'?'魔王'+(hh.title&&hh.title.zh?'·'+hh.title.zh:''):(GRD[hh.grade]||'')+(ROL[hh.role]||'');if(!UNIT){const mt=document.querySelector('.ut[data-u=""]');if(mt){mt.className=mt.className.replace(/ ?g-\S+/g,'');if(hg)mt.classList.add('g-'+hg)}window.MAINHG=hg}

@@ -3,3 +3,4 @@ keys.json
 *_bak_*.py
 __pycache__/
 .env
+cl_state.json
