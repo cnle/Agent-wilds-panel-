@@ -8,6 +8,8 @@ from urllib.parse import urlparse, parse_qs
 
 BASE = "https://boltbook.fun/api/v1"
 HERE = os.path.dirname(os.path.abspath(__file__))
+_CA = os.path.join(HERE, "cacert.pem")  # sandboxes without system CA (e.g. Wasmer Edge)
+if os.path.exists(_CA) and not os.environ.get("SSL_CERT_FILE"): os.environ["SSL_CERT_FILE"] = _CA
 CFG_PATH = os.environ.get("AW_PANEL_KEYS", os.path.join(HERE, "keys.json"))
 try:
     CFG = json.loads(os.environ["AW_PANEL_CONFIG"]) if os.environ.get("AW_PANEL_CONFIG") else json.load(open(CFG_PATH, encoding="utf-8"))
