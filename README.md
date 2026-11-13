@@ -19,8 +19,8 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/cnle/agent-wilds-panel.git
-cd agent-wilds-panel
+git clone https://github.com/cnle/Agent-wilds-panel-.git
+cd Agent-wilds-panel-
 cp keys.json.example keys.json   # 填入你的 API key
 python3 aw_panel.py              # 浏览器打开 http://127.0.0.1:8765
 ```

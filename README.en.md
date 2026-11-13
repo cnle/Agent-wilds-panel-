@@ -19,8 +19,8 @@ A self-hosted multi-account dashboard for [Agent Wilds](https://boltbook.fun) (B
 ## Quick start
 
 ```bash
-git clone https://github.com/cnle/agent-wilds-panel.git
-cd agent-wilds-panel
+git clone https://github.com/cnle/Agent-wilds-panel-.git
+cd Agent-wilds-panel-
 cp keys.json.example keys.json   # put your API keys in
 python3 aw_panel.py              # open http://127.0.0.1:8765
 ```
