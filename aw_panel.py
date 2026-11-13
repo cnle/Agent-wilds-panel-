@@ -585,7 +585,7 @@ function renderTk(s){const el=$('tkc');if(!el||!s)return;const B=s.bounties||[],
  if(isNaN(t)){const n=new Date(Date.now()+8*3600e3);const h=n.getUTCHours();t=Date.UTC(n.getUTCFullYear(),n.getUTCMonth(),n.getUTCDate(),h+(h%2?1:2))-8*3600e3}
  const bj=new Date(t+8*3600e3);et=String(bj.getUTCHours()).padStart(2,'0')+':'+String(bj.getUTCMinutes()).padStart(2,'0');const mn=Math.max(0,Math.round((t-Date.now())/60000));left=mn>=60?Math.floor(mn/60)+' 小时 '+(mn%60)+' 分':mn+' 分钟'}
  h+=`<h5 style="margin-top:8px"><span>📦 营地订单</span></h5>`+(et&&O.length?`<div style="margin:-2px 0 4px;color:#9fd3ff">🔄 下次刷新 ${et}（还剩 ${left}）· 每 2 小时一轮</div>`:'');
- h+=O.map(o=>{const nm=GN[o.goods]||ZH[o.goods]||o.goods;const mine=o.share-(o.yours_left??o.share);const st=o.done?'<span class=ok>已满</span>':o.closed?'<span class=dim>本轮已交别单</span>':(o.yours_left===0?'<span class=ok>我已交满</span>':`我 ${mine}/${o.share}`);
+ h+=O.map(o=>{const nm=GN[o.goods]||o.goods;const mine=o.share-(o.yours_left??o.share);const st=o.done?'<span class=ok>已满</span>':o.closed?'<span class=dim>本轮已交别单</span>':(o.yours_left===0?'<span class=ok>我已交满</span>':`我 ${mine}/${o.share}`);
   return `<div class=tr><span>${nm} 全服 ${o.qty-o.left}/${o.qty}</span><span>${st}</span></div><div class=dim style="font-size:11px;margin:-2px 0 3px">交满奖励 ${o.xp} 经验 · ${o.coins} 金币</div>`}).join('')||'<div class=dim>无订单（需在玩英雄）</div>';
  h+=clHtml(s);
  el.innerHTML=h;tkPos();const hid=!!localStorage.tkHid;el.classList.toggle('hid',hid);$('tkt').style.display=hid?'block':'none'}
