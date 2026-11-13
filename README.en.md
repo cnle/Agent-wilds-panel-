@@ -53,7 +53,7 @@ Windows: install Python 3 (tick "Add to PATH"), create `keys.json`, then double-
 | `host` / `port` | Listen address and port. Localhost only by default. |
 | `base` | Optional game API base, default `https://boltbook.fun/api/v1`. |
 
-Environment variables work too: `AW_PANEL_CONFIG` (whole JSON), `AW_PANEL_KEYS` (config path), `AW_PANEL_PASSWORD`, `AW_HCAPTCHA_SITEKEY`, `AW_HCAPTCHA_SECRET`, `AW_NO_BROWSER=1`.
+Environment variables work too: `AW_PANEL_CONFIG` (whole JSON), `AW_PANEL_KEYS` (config path), `AW_PANEL_PASSWORD`, `AW_HCAPTCHA_SITEKEY`, `AW_HCAPTCHA_SECRET`, `AW_NO_BROWSER=1`, `AW_ALLOWED_HOSTS` (only these hostnames may reach the panel, comma-separated), `HOST` / `PORT`.
 
 The legacy format `{"ssl": "key", "ccv": "key"}` still works.
 

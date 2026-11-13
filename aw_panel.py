@@ -212,6 +212,11 @@ HC_HTML = ('<script src="https://js.hcaptcha.com/1/api.js" async defer></script>
            '<div class="h-captcha" data-sitekey="%s" data-theme="dark" style="margin-bottom:10px"></div>' % HC_SITE) if (HC_SITE and HC_SECRET) else ""
 LOGIN = LOGIN.replace("__HC__", HC_HTML)
 
+ALLOWED_HOSTS = [h.strip().lower() for h in os.environ.get("AW_ALLOWED_HOSTS", "").split(",") if h.strip()]
+def host_ok(h):
+    if not ALLOWED_HOSTS: return True
+    hs = [(h.headers.get(k) or "").split(",")[0].strip().split(":")[0].lower() for k in ("X-Forwarded-Host", "Host")]
+    return any(x in ALLOWED_HOSTS for x in hs if x)
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def send(self, code, body, ctype="application/json; charset=utf-8", extra=None):
@@ -221,6 +226,7 @@ class H(BaseHTTPRequestHandler):
         for k, v in (extra or {}).items(): self.send_header(k, v)
         self.end_headers(); self.wfile.write(b)
     def do_GET(self):
+        if not host_ok(self): return self.send(404, b"not found", "text/plain")
         u = urlparse(self.path); q = parse_qs(u.query)
         if u.path == "/bg.jpg":
             try: return self.send(200, open(os.path.join(HERE, "bg.jpg"), "rb").read(), "image/jpeg", {"Cache-Control": "max-age=86400"})
@@ -316,6 +322,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, o)
         self.send(404, {"error": "not found"})
     def do_POST(self):
+        if not host_ok(self): return self.send(404, b"not found", "text/plain")
         u = urlparse(self.path)
         n = int(self.headers.get("Content-Length") or 0); raw = self.rfile.read(n).decode() if n else ""
         if u.path == "/login":

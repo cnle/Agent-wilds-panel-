@@ -115,6 +115,68 @@ docker run -d --name aw-panel --restart unless-stopped \
 
 Inside a container the panel must listen on `0.0.0.0`, so set `"host": "0.0.0.0"` (a password is then required). `-p 127.0.0.1:8765:8765` keeps it local to the host; expose it with a tunnel.
 
+## 6.5 Wasmer Edge (free hosting, no server of your own)
+
+Wasmer Edge runs Python directly and gives you HTTPS. The bundled `cacert.pem` exists for it: Wasmer's Python runtime has no system root certificates.
+
+**1. Prepare a folder** (Wasmer's Python preset expects the entry point at `src/main.py`):
+
+```bash
+mkdir aw-wasmer && cd aw-wasmer && mkdir src
+cp ../aw_panel.py src/main.py
+cp ../bg.jpg ../cacert.pem src/
+```
+
+**2. Create `app.yaml`** (set `owner` to your Wasmer username; pick any `name`):
+
+```yaml
+kind: wasmer.io/App.v0
+name: agent-wilds-panel
+owner: YOUR_WASMER_USERNAME
+package: .
+env:
+  AW_NO_BROWSER: "1"
+  HOST: "0.0.0.0"
+  # Enable these after you add a custom domain (step 5)
+  # AW_ALLOWED_HOSTS: "panel.example.com"
+# domains:
+#   - panel.example.com
+```
+
+Never put keys or passwords in `app.yaml`.
+
+**3. Install the CLI and deploy:**
+
+```bash
+curl https://get.wasmer.io -sSfL | sh      # on Windows see the wasmer.io docs
+wasmer login                               # or set WASMER_TOKEN
+wasmer deploy --non-interactive --build-remote
+```
+
+You get a `https://<name>.wasmer.app` address when it finishes.
+
+**4. Set Secrets in the Wasmer dashboard** (App → Settings → Secrets), then press **Redeploy** for them to take effect:
+
+| Secret | Value |
+|---|---|
+| `AW_PANEL_CONFIG` | The whole `keys.json` content (valid JSON: paste one `{...}` only, no example text) |
+| `AW_PANEL_PASSWORD` | Login password (required on the internet) |
+| `AW_HCAPTCHA_SITEKEY` / `AW_HCAPTCHA_SECRET` | Optional, turns on hCaptcha |
+
+From the CLI: `wasmer app secret create --app YOUR_WASMER_USERNAME/agent-wilds-panel AW_PANEL_PASSWORD 'long-password'`, then `wasmer deploy` again.
+
+Check the logs: `wasmer app logs YOUR_WASMER_USERNAME/agent-wilds-panel` should show `accounts / 账号: ...`. An error like `Extra data` means `AW_PANEL_CONFIG` is not valid JSON.
+
+**5. Use your own domain (optional)**
+
+1. Add the domain under `domains` in `app.yaml` and deploy again.
+2. At your DNS provider add a CNAME: `panel` → `<name>.wasmer.app`. On Cloudflare set it to **DNS only (grey cloud, not proxied)**, or Wasmer cannot issue the certificate.
+3. After a few minutes open `https://panel.example.com`.
+
+**Custom domain only:** set `AW_ALLOWED_HOSTS` (comma-separated). The panel then answers 404 to every other host, `*.wasmer.app` included. Turn it on only after the custom domain works, or you lock yourself out.
+
+**Updating:** replace `src/main.py` and run `wasmer deploy --non-interactive --build-remote` again.
+
 ## 7. Security checklist
 
 - [ ] `keys.json` is mode 600 and not committed.

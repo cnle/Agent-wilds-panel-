@@ -115,6 +115,68 @@ docker run -d --name aw-panel --restart unless-stopped \
 
 注意：在容器里要监听 `0.0.0.0` 才能被端口映射访问，所以配置里写 `"host": "0.0.0.0"` 并必须设置密码；`-p 127.0.0.1:8765:8765` 保证宿主机只在本机暴露，再用 Tunnel 对外。
 
+## 6.5 Wasmer Edge（免费托管，无需自己的服务器）
+
+Wasmer Edge 能直接跑 Python 程序，自带 HTTPS。仓库里的 `cacert.pem` 就是为它准备的（Wasmer 的 Python 运行环境没有系统根证书）。
+
+**1. 准备目录**（Wasmer 的 Python 预设要求入口是 `src/main.py`）：
+
+```bash
+mkdir aw-wasmer && cd aw-wasmer && mkdir src
+cp ../aw_panel.py src/main.py
+cp ../bg.jpg ../cacert.pem src/
+```
+
+**2. 新建 `app.yaml`**（`owner` 换成你的 Wasmer 用户名，`name` 自取）：
+
+```yaml
+kind: wasmer.io/App.v0
+name: agent-wilds-panel
+owner: YOUR_WASMER_USERNAME
+package: .
+env:
+  AW_NO_BROWSER: "1"
+  HOST: "0.0.0.0"
+  # 绑定自定义域名后再打开下面两行（见第 5 步）
+  # AW_ALLOWED_HOSTS: "panel.example.com"
+# domains:
+#   - panel.example.com
+```
+
+不要把 key 或密码写进 `app.yaml`。
+
+**3. 安装 CLI 并部署**：
+
+```bash
+curl https://get.wasmer.io -sSfL | sh      # Windows 见 wasmer.io 文档
+wasmer login                               # 或设置环境变量 WASMER_TOKEN
+wasmer deploy --non-interactive --build-remote
+```
+
+部署完成后会给出 `https://<name>.wasmer.app` 地址。
+
+**4. 在 Wasmer 后台设置 Secrets**（App → Settings → Secrets），然后点 **Redeploy** 才会生效：
+
+| Secret | 内容 |
+|---|---|
+| `AW_PANEL_CONFIG` | 整段 `keys.json` 内容（必须是合法 JSON，只粘贴一个 `{...}`，不要混入示例文字） |
+| `AW_PANEL_PASSWORD` | 登录密码（公网必填） |
+| `AW_HCAPTCHA_SITEKEY` / `AW_HCAPTCHA_SECRET` | 可选，开启 hCaptcha |
+
+也可以用命令行：`wasmer app secret create --app YOUR_WASMER_USERNAME/agent-wilds-panel AW_PANEL_PASSWORD '长密码'`，之后重新 `wasmer deploy`。
+
+看日志确认账号都读到：`wasmer app logs YOUR_WASMER_USERNAME/agent-wilds-panel`，应出现 `accounts / 账号: ...`。若报 `Extra data` 之类，说明 `AW_PANEL_CONFIG` 不是合法 JSON。
+
+**5. 绑定自己的域名（可选）**
+
+1. 在 `app.yaml` 的 `domains` 里加上域名，重新部署。
+2. 到 DNS 服务商加一条 CNAME：`panel` → `<name>.wasmer.app`。用 Cloudflare 时要设为 **仅 DNS（灰云，不代理）**，否则 Wasmer 无法签发证书。
+3. 等几分钟后用 `https://panel.example.com` 打开。
+
+**只允许自定义域名访问**：设置环境变量 `AW_ALLOWED_HOSTS`（逗号分隔，可写多个），面板会对其他域名（包括 `*.wasmer.app`）一律返回 404。确认自定义域名能打开后再开启，否则会把自己锁在外面。
+
+**更新**：替换 `src/main.py` 后重新 `wasmer deploy --non-interactive --build-remote`。
+
 ## 7. 安全清单
 
 - [ ] `keys.json` 权限 600，没有提交到 Git。

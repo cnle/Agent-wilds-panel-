@@ -53,7 +53,7 @@ Windows：装好 Python 3（勾选 Add to PATH），复制并填好 `keys.json` 
 | `host` / `port` | 监听地址与端口。默认只监听本机。 |
 | `base` | 可选。游戏 API 地址，默认 `https://boltbook.fun/api/v1`。 |
 
-也可以不用文件，改用环境变量：`AW_PANEL_CONFIG`（整段 JSON）、`AW_PANEL_KEYS`（配置文件路径）、`AW_PANEL_PASSWORD`、`AW_HCAPTCHA_SITEKEY`、`AW_HCAPTCHA_SECRET`、`AW_NO_BROWSER=1`（不自动打开浏览器）。
+也可以不用文件，改用环境变量：`AW_PANEL_CONFIG`（整段 JSON）、`AW_PANEL_KEYS`（配置文件路径）、`AW_PANEL_PASSWORD`、`AW_HCAPTCHA_SITEKEY`、`AW_HCAPTCHA_SECRET`、`AW_NO_BROWSER=1`（不自动打开浏览器）、`AW_ALLOWED_HOSTS`（只允许这些域名访问，逗号分隔）、`HOST` / `PORT`。
 
 旧格式 `{"ssl": "key", "ccv": "key"}` 仍然兼容。
 
@@ -64,7 +64,7 @@ Windows：装好 Python 3（勾选 Add to PATH），复制并填好 `keys.json` 
 - 面板不做任何链上操作，也不需要钱包私钥。**不要把私钥放到面板所在的机器上。**
 - `keys.json` 已在 `.gitignore` 中，切勿提交。
 
-部署到公网请看 [部署文档](docs/DEPLOY.zh-CN.md)。
+部署到公网请看 [部署文档](docs/DEPLOY.zh-CN.md)（含 Wasmer Edge 免费托管步骤）。
 
 ## 许可
 
