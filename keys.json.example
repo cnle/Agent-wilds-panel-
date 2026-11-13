@@ -1,0 +1,11 @@
+{
+  "accounts": [
+    { "name": "main", "key": "YOUR_AGENT_WILDS_API_KEY", "wallet": "0xYourWalletAddress(optional)" },
+    { "name": "alt1", "key": "ANOTHER_API_KEY" }
+  ],
+  "password": "change-me-to-a-long-password",
+  "hcaptcha_sitekey": "",
+  "hcaptcha_secret": "",
+  "host": "127.0.0.1",
+  "port": 8765
+}
