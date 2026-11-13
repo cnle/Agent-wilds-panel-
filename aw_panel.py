@@ -875,7 +875,7 @@ init();setInterval(()=>{if($('dlg').style.display!='flex')refreshState()},60000)
 PAGE = PAGE.replace("__L64__", L64).replace("__L128__", L128); LOGIN = LOGIN.replace("__L64__", L64)
 
 if __name__ == "__main__":
-    host = CFG.get("host", "127.0.0.1"); port = int(CFG.get("port", 8765))
+    host = os.environ.get("HOST") or CFG.get("host", "127.0.0.1"); port = int(os.environ.get("PORT") or CFG.get("port", 8765))
     if host not in ("127.0.0.1", "localhost") and not PASSWORD:
         print("A password is required when host is not 127.0.0.1 / 对外开放时必须设置 password"); sys.exit(1)
     if PASSWORD and not (HC_SITE and HC_SECRET):
