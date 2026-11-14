@@ -395,7 +395,7 @@ class H(BaseHTTPRequestHandler):
             if body.get("action") == "discard":
                 me = ((api(acct, "GET", MEP)[1] or {}).get("me")) or {}
                 it = next((i for i in (me.get("gear_bag") or []) if i.get("id") == body.get("item")), None)
-                if not it or not it.get("bound"): return self.send(400, {"error": "只能丢弃背包里的绑定装备"})
+                if not it: return self.send(400, {"error": "只能丢弃背包里的装备"})  # 2026-11-15 00:19 user「增加背包装备丢弃按钮」
             def _stock():
                 me = ((api(acct, "GET", MEP)[1] or {}).get("me")) or {}
                 o = {}
@@ -663,7 +663,7 @@ function detail(src,id){if(src=='mk'){const x=((MX.data||{}).listings||[]).find(
  if(src=='stash')h+=`<button class=gold onclick="equipFromStash(${id})">穿上</button><button onclick="act({action:'unstash',item:${id}},'取回背包')">取回背包</button>`;
  if(src=='bag'&&it.bound)h+=`</div><div class=dim style="margin-top:6px">新手绑定装备：不能出售、分解或放仓库，只能穿或丢弃。</div><div class=row><button class=red onclick="discardItem(${id},'${(it.name_zh||it.name).replace(/'/g,'')}')">丢弃</button>`;
  else if(src=='bag')h+=`</div><div class=row>出售价 <input id=sp type=number min=1 step=1 placeholder=金币> <button onclick="sellItem(${id})">挂单出售</button>
-`+(it.no_salvage?'<span class=dim>自制装备不能分解</span>':`<button class=red onclick="salvage(${id},'${(it.name_zh||it.name).replace(/'/g,'')}')">分解</button>`);
+`+(it.no_salvage?'<span class=dim>自制装备不能分解</span>':`<button class=red onclick="salvage(${id},'${(it.name_zh||it.name).replace(/'/g,'')}')">分解</button>`)+`<button class=red onclick="discardItem(${id},'${(it.name_zh||it.name).replace(/'/g,'')}')">丢弃</button>`;
  if(src=='stash')h+=`</div><div class=dim style="margin-top:6px">出售或分解前请先“取回背包”。`;
  h+=`</div><div class=row><button onclick="closeDlg()">关闭</button></div>`;openDlg(h)}
 function showSq(id){const q=(window.SQ||[]).find(x=>x.id==id);if(!q)return;openDlg(`<h3>T${q.id} · ${GRD[q.grade]||q.grade||''}${ROL[q.role]||q.role||''}</h3><div>状态：随主角队伍同行</div><div>体力 AP：${q.ap??'-'} / ${q.ap_max??'-'}</div><div class=dim style="margin-top:8px">队伍中的英雄游戏只提供等阶、职业和体力，等级与装备要单独出队后才能查看。</div><div style="margin-top:12px;text-align:right"><button onclick="closeDlg()">关闭</button></div>`)}
