@@ -407,7 +407,13 @@ class H(BaseHTTPRequestHandler):
                         for it in src:
                             if isinstance(it, dict) and isinstance(it.get("qty"), (int, float)): k = it.get("key") or it.get("goods") or it.get("name"); o[k] = o.get(k, 0) + it["qty"]
                 return o, [i.get("id") for i in (me.get("gear_bag") or [])]
-            pre = _stock()[0] if body.get("action") == "salvage" else None
+            pre = None
+            if body.get("action") == "salvage":  # 2026-11-15 14:50 an empty pre-read made 'gained' the whole bag
+                for _ in range(3):
+                    pre = _stock()[0]
+                    if pre: break
+                    time.sleep(1)
+                if not pre: pre = None
             c, d = api(acct, "POST", "/world/act", body)
           
             if body.get("action") == "salvage" and isinstance(d, dict) and not d.get("success") and "workbench" in str(d.get("error", "")):
@@ -430,7 +436,7 @@ class H(BaseHTTPRequestHandler):
                     gained = {k: round(v - pre.get(k, 0), 2) for k, v in post.items() if v - pre.get(k, 0) > 0}
                     if gained and body.get("item") not in ids: break
                     time.sleep(2)
-                d["gained"] = gained
+                d["gained"] = gained if len(gained) <= 6 else {}
             if isinstance(d, dict): d.pop("around", None)
             return self.send(200, {"code": c, "result": d})
         self.send(404, {"error": "not found"})
