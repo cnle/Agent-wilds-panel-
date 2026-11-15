@@ -491,7 +491,7 @@ input{background:rgba(0,0,0,.4);color:var(--txt);border:1px solid rgba(240,195,9
  #dlg button{padding:10px 16px;font-size:15px}input{width:46%}
 }
 </style>
-<header><h1 style="display:flex;align-items:center;gap:8px"><img src="data:image/png;base64,__L128__" alt="" style="width:38px;height:38px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))">Agent Wilds 面板</h1><span id=tabs></span><button onclick="load()">刷新</button><span id=upd class=dim></span><div id=utabs></div></header>
+<header><h1 style="display:flex;align-items:center;gap:8px"><img src="data:image/png;base64,__L128__" alt="" style="width:38px;height:38px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))">Agent Wilds 面板</h1><span id=dn title="荒野一天=现实2小时，夜晚 19:30–05:00（UTC+8 对齐）；夜晚魔王伤害/防御加成" style="font-size:13px;padding:3px 9px;border:1px solid var(--line);border-radius:12px;white-space:nowrap"></span><span id=tabs></span><button onclick="load()">刷新</button><span id=upd class=dim></span><div id=utabs></div></header>
 <main>
  <div class=card><h2>英雄 <span id=loc class=dim></span></h2><div id=hero></div></div>
  <div class=card><h2>穿戴装备 <span class=dim>点击可卸下</span></h2><div id=worn class=grid></div></div>
@@ -879,6 +879,13 @@ async function identify(id,name,cost){if(!await ask(`鉴定「${name}」？花 $
 function detailAfter(id){for(const s of ['bag','stash','worn']){if(find(s,id)){detail(s,id);return}}closeDlg()}
 async function discardItem(id,name){if(!await ask(`丢弃「${name}」？丢弃后直接消失，无法恢复，也不得任何材料。`))return;const r=await post({action:'discard',item:id});
  if(r.result&&r.result.success){toast('已丢弃');closeDlg();load()}else toast('丢弃失败：'+errText(r),6000)}
+// 2026-11-15 day/night header: Wilds day = 2 real hours, night 19:30-05:00 game clock (skill.md), anchored to UTC+8 midnight; server me.hero.bonus.night_now wins if it disagrees
+function dnTick(){const e=$('dn');if(!e)return;const t=((Date.now()/1000+28800)%7200+7200)%7200,h=t/300;let n=(h>=19.5||h<5),r=n?((h>=19.5?29:5)-h)*300:(19.5-h)*300;
+ const sv=ST&&ST.hero&&ST.hero.bonus&&typeof ST.hero.bonus.night_now=='boolean'?ST.hero.bonus.night_now:null;const off=sv!==null&&sv!==n;if(off)n=sv;
+ const gh=Math.floor(h),gm=Math.floor((h-gh)*60),m=Math.floor(r/60),sc=Math.floor(r%60);
+ e.textContent=(n?'🌙 夜晚':'☀️ 白天')+' '+String(gh).padStart(2,'0')+':'+String(gm).padStart(2,'0')+' · '+(off?'即将':m+':'+String(sc).padStart(2,'0')+' 后')+(n?'天亮':'入夜');
+ e.style.color=n?'#9fb4ff':'#ffd479'}
+setInterval(dnTick,1000);dnTick();
 init();setInterval(()=>{if($('dlg').style.display!='flex')refreshState()},60000);
 </script></html>"""
 PAGE = PAGE.replace("__L64__", L64).replace("__L128__", L128); LOGIN = LOGIN.replace("__L64__", L64)
