@@ -311,6 +311,53 @@ class H(BaseHTTPRequestHandler):
             c4, ab = api(acct, "GET", "/world/abyss")
             o["abox"] = ((ab.get("you") or {}).get("box") or []) if c4 == 200 else []
             return self.send(200, o)
+        if u.path == "/api/abyss_team":  # 2026-11-18 深渊配装卡片（只读，懒加载）
+            c, d = api(acct, "GET", "/world/abyss/team")
+            if c != 200: return self.send(c or 502, d)
+            t = d.get("team") or {}
+            c2, d2 = api(acct, "GET", "/world/me"); m = (d2 or {}).get("me") or {} if c2 == 200 else {}
+            idx = {}  # item id -> (where, name_zh, set) from the one /world/me read
+            def _ix(lst, where):
+                if not isinstance(lst, (dict, list)): return  # units list gear_bag as a count
+                for it in (lst.values() if isinstance(lst, dict) else (lst or [])):
+                    if isinstance(it, dict) and isinstance(it.get("id"), int):
+                        idx[it["id"]] = {"src": where, "name_zh": it.get("name_zh") or it.get("name"), "set": it.get("set"), "level": it.get("level"), "durability": it.get("durability"), "durability_max": it.get("durability_max")}
+            _ix(m.get("worn"), "主号身上"); _ix(m.get("gear_bag"), "主号背包"); _ix(m.get("stash"), "仓库")
+            for x in (m.get("units") or []): _ix(x.get("gear_bag"), "英雄%s背包" % x.get("hero"))
+            for h in (t.get("heroes") or []):
+                for g in (h.get("gear") or {}).values():
+                    if isinstance(g, dict) and g.get("id") in idx: g.update({k: v for k, v in idx[g["id"]].items() if v is not None})
+            mh = (m.get("hero") or {})
+            o = {"team": t, "rules": d.get("rules"), "main": {"id": mh.get("id"), "name": m.get("name"), "level": m.get("level"), "grade": mh.get("grade"), "role": mh.get("role")}}
+            if (q.get("full") or [""])[0] == "1":  # 2026-11-20 深渊预设：所有英雄 + 可选装备池（背包/仓库/各英雄身上与背包，不含主号身上）
+                units = [x for x in (m.get("units") or []) if isinstance(x.get("hero"), int)]
+                o["units"] = [{"id": x["hero"], "name": x.get("name"), "level": x.get("level")} for x in units]
+                pool, ures = {}, {}
+                def _pi(lst, where, holder=None):
+                    for it in (lst.values() if isinstance(lst, dict) else (lst or [])):
+                        if isinstance(it, dict) and isinstance(it.get("id"), int) and it.get("slot"):
+                            pool[it["id"]] = {"id": it["id"], "slot": it.get("slot"), "level": it.get("level"), "rarity": it.get("rarity"), "name_zh": it.get("name_zh") or it.get("name"),
+                                              "set": it.get("set"), "set_name": it.get("set_name"), "set_name_zh": it.get("set_name_zh"), "damage": it.get("damage"), "armor": it.get("armor"), "broken": it.get("broken"),
+                                              "durability": it.get("durability"), "durability_max": it.get("durability_max"), "src": where, "holder": holder}
+                _pi(m.get("gear_bag"), "主号背包"); _pi(m.get("stash"), "仓库")
+                def _uf(hid):
+                    try:
+                        c4, d4 = api(acct, "GET", "/world/me?unit=%d" % hid)
+                        if c4 == 200: ures[hid] = (d4 or {}).get("me") or {}
+                    except Exception: pass
+                ids = [x["hero"] for x in units]
+                for i in range(0, len(ids), 6):
+                    ts = [threading.Thread(target=_uf, args=(h,)) for h in ids[i:i + 6]]; [x.start() for x in ts]; [x.join(20) for x in ts]
+                for hid in ids:
+                    um = ures.get(hid)
+                    if um is None: continue
+                    _pi(um.get("worn"), "英雄#%d身上" % hid, hid); _pi(um.get("gear_bag"), "英雄#%d背包" % hid, hid)
+                for h in (t.get("heroes") or []):
+                    for g in (h.get("gear") or {}).values():
+                        if isinstance(g, dict) and g.get("id") in pool: g.update({k: v for k, v in pool[g["id"]].items() if v is not None and k in ("src", "name_zh", "set", "durability", "durability_max", "level")})
+                o["pool"] = list(pool.values()); o["pool_missing"] = [h for h in ids if h not in ures]
+                o["main_worn"] = [it.get("id") for it in ((m.get("worn") or {}).values() if isinstance(m.get("worn"), dict) else (m.get("worn") or [])) if isinstance(it, dict)]
+            return self.send(200, o)
         if u.path == "/api/unit":
             hid = (q.get("id") or [""])[0]
             if not hid.isdigit(): return self.send(400, {"error": "bad id"})
@@ -364,6 +411,26 @@ class H(BaseHTTPRequestHandler):
                 it = body.get("items")
                 if not (isinstance(it, dict) and it and all(isinstance(v, int) and v > 0 for v in it.values())) or "coins" in body: return self.send(400, {"error": "材料数量不对"})
                 if body.get("store") not in (None, "own"): body.pop("store")
+            if body.get("action") == "abyss" and body.get("do") in ("kit", "team"):  # 2026-11-18 深渊配装 / 2026-11-20 深渊预设：严格白名单，永不允许 enter/fight/leave
+                jb = j.get("body") or {}
+                isint = lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0
+                if jb.get("do") == "team":
+                    hs = jb.get("heroes")
+                    if hs == "squad": kb = {"action": "abyss", "do": "team", "heroes": "squad"}
+                    elif isinstance(hs, list) and 4 <= len(hs) <= 9 and all(isint(x) for x in hs) and len(set(hs)) == len(hs): kb = {"action": "abyss", "do": "team", "heroes": hs}
+                    else: return self.send(400, {"error": "深渊队伍需选 4–9 位英雄（或恢复跟随小队）"})
+                elif jb.get("auto") is True and "clear" not in jb and "slot" not in jb and "item" not in jb:
+                    hb = jb.get("hero")
+                    if hb is not None and not isint(hb): return self.send(400, {"error": "bad hero"})
+                    kb = {"action": "abyss", "do": "kit", "auto": True}
+                    if isint(hb): kb["hero"] = hb
+                elif jb.get("clear") is True and isint(jb.get("hero")) and "auto" not in jb and "slot" not in jb:
+                    kb = {"action": "abyss", "do": "kit", "hero": jb["hero"], "clear": True}
+                elif isint(jb.get("hero")) and jb.get("slot") in ("weapon", "offhand", "head", "chest", "hands", "legs", "feet", "ring", "amulet", "tool") and "item" in jb and (jb["item"] is None or isint(jb["item"])) and "auto" not in jb and "clear" not in jb:
+                    kb = {"action": "abyss", "do": "kit", "hero": jb["hero"], "slot": jb["slot"], "item": jb["item"]}
+                else: return self.send(400, {"error": "只允许设队伍、单格配装、自动配装或恢复身上装备"})
+                c, d = api(acct, "POST", "/world/act", kb)
+                return self.send(200, {"code": c, "result": d})
             if body.get("action") == "abyss" and body.get("do") not in ("claim", "talent", "mastery"): return self.send(400, {"error": "只允许领取深渊箱和深渊天赋"})
             if body.get("action") == "abyss" and body.get("do") == "talent" and not isinstance(body.get("node"), str): return self.send(400, {"error": "bad node"})
             if body.get("action") == "abyss" and body.get("do") == "mastery" and (not isinstance(body.get("node"), str) or body.get("pick") not in (0, 1, 2)): return self.send(400, {"error": "bad pick"})
@@ -472,6 +539,17 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;pad
 table{width:100%;border-collapse:collapse;font-size:13px;min-width:560px}td,th{padding:6px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{color:var(--dim);font-weight:normal}
 .stabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px}.stb{padding:3px 9px;border:1px solid var(--line);border-radius:999px;font-size:12px;cursor:pointer;background:rgba(40,34,26,.7)}.stb.on{background:var(--acc);color:#1a1712;font-weight:600}.stb.red{border-color:#e0524a;color:#ff8a80}.stb.red.on{color:#1a1712}
 .goods{display:flex;flex-wrap:wrap;gap:5px}.bag{display:flex;flex-direction:column;gap:8px}.gsec{border:1px solid var(--line);border-radius:10px;background:rgba(10,9,8,.3);overflow:hidden}.gsh{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;cursor:pointer;font-size:13px;color:#e8dcc2;background:rgba(240,195,90,.06);user-select:none}.ggrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:5px;padding:7px}.gi{display:flex;justify-content:space-between;align-items:center;gap:6px;background:rgba(10,9,8,.45);border:1px solid rgba(240,195,90,.12);border-radius:7px;padding:4px 8px;font-size:12px;cursor:pointer;min-width:0}.gi span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gi b{color:#f0c35a;font-weight:600}.gi:hover{border-color:rgba(240,195,90,.5)}.g{background:rgba(10,9,8,.45);border:1px solid var(--line);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px}
+#fxc>:first-child,#mkc>:first-child,#tlc>:first-child,#qmc>:first-child{position:sticky;top:-16px;z-index:3;background:rgba(30,26,20,.98);margin-top:-6px;padding:8px 0;align-items:center!important;box-shadow:0 6px 8px -6px rgba(0,0,0,.6)}#qmc>:first-child{top:-18px;background:rgba(38,32,24,.99)}
+@media(max-width:700px){#fx,#mk,#tl,#qmw{align-items:flex-start;padding-top:max(8px,env(safe-area-inset-top))}#fx>div,#mk>div,#tl>div,#qmw>div{max-height:calc(100vh - 16px - env(safe-area-inset-top));max-height:calc(100dvh - 16px - env(safe-area-inset-top))}}
+#abp{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:flex-start;justify-content:center;z-index:32;overflow:auto;-webkit-overflow-scrolling:touch;padding:max(10px,env(safe-area-inset-top)) 0 20px}
+#abp>div{background:rgba(30,26,20,.97);border:1px solid var(--line);border-radius:14px;padding:14px;width:min(1000px,96vw);margin:auto 0}
+#abp .abph{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;position:sticky;top:-14px;background:rgba(30,26,20,.97);padding:6px 0;z-index:1}#abp .abph h3{margin:0;color:var(--acc);font-size:16px}
+#abp .abpl{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:5px}
+#abp .abpr{display:flex;justify-content:space-between;align-items:center;gap:6px;border:1px solid var(--line);border-radius:8px;padding:5px 8px;background:rgba(10,9,8,.4);font-size:13px}#abp .abpr.on{border-color:rgba(240,195,90,.6);background:rgba(240,195,90,.08)}
+#abp .abpr label{flex:1;cursor:pointer;display:flex;align-items:center;gap:5px;flex-wrap:wrap}#abp .abpr input{width:18px;height:18px;margin:0}#abp .abpr button{padding:2px 10px;margin-left:4px}#abp button:disabled{opacity:.4;cursor:default}
+#abp .abpg{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:8px}
+#abp .abps{display:grid;grid-template-columns:38px minmax(0,1fr);gap:6px;align-items:center;margin:3px 0;font-size:12px}#abp select{width:100%;min-width:0;background:rgba(0,0,0,.45);color:var(--txt);border:1px solid rgba(240,195,90,.3);border-radius:7px;padding:5px 6px;font-size:13px}
+@media(max-width:600px){#abp .abpg,#abp .abpl{grid-template-columns:minmax(0,1fr)}#abp select{font-size:16px}}
 #dlg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:30}
 #dlg>div{background:rgba(30,26,20,.96);border:1px solid var(--line);border-radius:14px;padding:16px;width:min(460px,94vw);max-height:88vh;overflow:auto}
 #tkc{position:fixed;left:12px;top:120px;z-index:7;width:250px;background:rgba(20,18,15,.8);border:1px solid rgba(240,195,90,.35);border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.5;box-shadow:0 6px 20px rgba(0,0,0,.45);backdrop-filter:blur(4px);transition:transform .25s}#tkc.hid{transform:translateX(calc(-100% - 14px))}#tkc h5{margin:0 0 4px;font-size:13px;color:#f0c35a;display:flex;justify-content:space-between;align-items:center}#tkc .tr{display:flex;justify-content:space-between;gap:6px}#tkc .ok{color:#6fd07a}#tkc .pd{color:#f0c35a}#tkc .x{cursor:pointer;color:#ccc;padding:0 6px;font-size:16px}#pzc{position:fixed;left:12px;top:300px;z-index:7;width:250px;background:rgba(20,18,15,.8);border:1px solid rgba(240,195,90,.35);border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.5;box-shadow:0 6px 20px rgba(0,0,0,.45);backdrop-filter:blur(4px);transition:transform .25s}#pzc.hid{transform:translateX(calc(-100% - 14px))}#pzc h5{margin:0 0 4px;font-size:13px;color:#f0c35a;display:flex;justify-content:space-between;align-items:center}#pzc .tr{display:flex;justify-content:space-between;gap:6px}#pzc .x{cursor:pointer;color:#ccc;padding:0 6px;font-size:16px}#pzc .sub{color:#a99c86;margin-top:6px;border-top:1px dashed rgba(240,195,90,.2);padding-top:4px}#pzc .v{color:#f0c35a}#pzt{position:fixed;left:0;top:300px;z-index:7;display:none;cursor:pointer;background:rgba(240,195,90,.85);color:#2a1f08;border-radius:0 10px 10px 0;padding:10px 5px;font-size:12px;writing-mode:vertical-rl;font-weight:700;box-shadow:0 4px 12px rgba(0,0,0,.4)}#tkt{position:fixed;left:0;top:120px;z-index:7;display:none;cursor:pointer;background:rgba(240,195,90,.85);color:#2a1f08;border-radius:0 10px 10px 0;padding:10px 5px;font-size:12px;writing-mode:vertical-rl;font-weight:700;box-shadow:0 4px 12px rgba(0,0,0,.4)}
@@ -506,7 +584,7 @@ input{background:rgba(0,0,0,.4);color:var(--txt);border:1px solid rgba(240,195,9
  <div class="card full"><h2>物品与材料 <span class=dim>点击可出售</span></h2><div id=goods class=bag></div></div>
  <div class="card full"><h2>市场挂单与收益 <span class=dim id=mkt_sum></span></h2><div id=market></div></div>
 </main>
-<div id=dlg onclick="if(event.target.id=='dlg')closeDlg()"><div id=dlgc></div></div><div id=toast></div><div id=tkc></div><div id=tkt onclick="tkShow(1)">任务 ›</div><div id=pzc></div><div id=pzt onclick="pzShow(1)">宝箱 ›</div><div id=ask><div><h4 id=askt>请确认</h4><div class=am id=askm></div><div class=ab><button id=askn>取消</button><button class=ok id=asky>确定</button></div></div></div><div id=qmw onclick="if(event.target.id=='qmw')closeQm()"><div id=qmc></div></div><div id=mkb title="营地交易所" onclick="openMk()">🏪</div><div id=mk onclick="if(event.target.id=='mk')this.style.display='none'"><div id=mkc></div></div><div id=tlb title="天赋" onclick="openTl()"><svg width=34 height=34 viewBox="0 0 34 34"><g fill=none stroke="#fff6d8" stroke-width=2 stroke-linecap=round><path d="M17 30V17M17 17L9 10M17 17l8-7M17 17V6"/></g><g fill="#fff6d8"><circle cx=17 cy=30 r=3.2 /><circle cx=17 cy=17 r=3 /><circle cx=9 cy=10 r=2.6 /><circle cx=25 cy=10 r=2.6 /><circle cx=17 cy=5.5 r=2.6 /></g></svg><i id=tlbdot></i></div><div id=tl onclick="if(event.target.id=='tl')closeTl()"><div id=tlc></div></div><div id=fx onclick="if(event.target.id=='fx')closeFx()"><div id=fxc></div></div>
+<div id=dlg onclick="if(event.target.id=='dlg')closeDlg()"><div id=dlgc></div></div><div id=abp onclick="if(event.target.id=='abp')abpClose()"><div><div class=abph><h3 id=abpt>深渊预设</h3><span><button onclick="loadAbp()">刷新</button> <button onclick="abpClose()">关闭 ✕</button></span></div><div id=abpc></div></div></div><div id=toast></div><div id=tkc></div><div id=tkt onclick="tkShow(1)">任务 ›</div><div id=pzc></div><div id=pzt onclick="pzShow(1)">宝箱 ›</div><div id=ask><div><h4 id=askt>请确认</h4><div class=am id=askm></div><div class=ab><button id=askn>取消</button><button class=ok id=asky>确定</button></div></div></div><div id=qmw onclick="if(event.target.id=='qmw')closeQm()"><div id=qmc></div></div><div id=mkb title="营地交易所" onclick="openMk()">🏪</div><div id=mk onclick="if(event.target.id=='mk')this.style.display='none'"><div id=mkc></div></div><div id=tlb title="天赋" onclick="openTl()"><svg width=34 height=34 viewBox="0 0 34 34"><g fill=none stroke="#fff6d8" stroke-width=2 stroke-linecap=round><path d="M17 30V17M17 17L9 10M17 17l8-7M17 17V6"/></g><g fill="#fff6d8"><circle cx=17 cy=30 r=3.2 /><circle cx=17 cy=17 r=3 /><circle cx=9 cy=10 r=2.6 /><circle cx=25 cy=10 r=2.6 /><circle cx=17 cy=5.5 r=2.6 /></g></svg><i id=tlbdot></i></div><div id=tl onclick="if(event.target.id=='tl')closeTl()"><div id=tlc></div></div><div id=fx onclick="if(event.target.id=='fx')closeFx()"><div id=fxc></div></div>
 <script>
 const RC={plain:'#d6d0c2',runed:'#4fc3e8',treasured:'#e8c547',set:'#5fd06a',mythic:'#ff6b3d',legendary:'#ff6b3d'};
 const RN={plain:'凡品',runed:'符刻',treasured:'珍品',set:'套装',mythic:'神话',legendary:'传奇'};
@@ -531,7 +609,7 @@ function gname(k){if(CUR[k])return CUR[k];if(GN[k])return GN[k];if(typeof MZ!='u
  m=k.match(/^recipe_(\w+)$/);if(m)return '食谱·'+m[1];m=k.match(/^essence_(\w+)$/);if(m)return m[1]+'精华';return k}
 function bar(v,max,col,label){const p=max?Math.max(0,Math.min(100,v/max*100)):0;return `<div class=dim>${label}</div><div class=bar><i style="width:${p}%;background:${col}"></i><span>${Math.round(v)} / ${Math.round(max)}</span></div>`}
 async function init(){const a=await j('/api/accts');$('tabs').innerHTML=a.accts.map(x=>`<span class=tab id=t_${x} onclick="pick('${x}')">${x}</span>`).join(' ');pick(a.accts[0])}
-function pick(a){ACCT=a;UNIT=null;document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.id=='t_'+a));load();loadUnits()}
+function pick(a){ACCT=a;UNIT=null;ABK=null;if($('abp')&&$('abp').style.display=='flex')setTimeout(loadAbp,0);if(typeof ABKOPEN!="undefined"&&ABKOPEN)setTimeout(loadAbk,0);document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.id=='t_'+a));load();loadUnits()}
 function pickUnit(u){UNIT=u;document.querySelectorAll('.ut').forEach(e=>e.classList.toggle('on',e.dataset.u==String(u||'')));load()}
 const SQ=()=>'/api/state?acct='+ACCT+(UNIT?'&unit='+UNIT:'');
 async function load(){$('upd').textContent='加载中…';const [s,m,st]=await Promise.all([j(SQ()),j('/api/market?acct='+ACCT),j('/api/stores?acct='+ACCT)]);ST=s;MK=m;STO=st;
@@ -609,7 +687,7 @@ function render(){const s=ST;renderTk(s);renderPz(s);if(!s||s.error){$('hero').t
  $('hero').innerHTML=`<div class=stats><div><span class=dim>个人战力</span><b>${s.power??(s.gear_score&&s.gear_score.power)??'-'}</b></div><div><span class=dim>队伍总战力</span><b>${s.squad_power??'-'}</b></div><div ${UNIT?'':'onclick="openFx()" style="cursor:pointer" title="点击进入金币交易所"'}><span class=dim>金币${UNIT?'':' <span style="color:#f0c35a">交易›</span>'}</span><b>${s.coins}</b></div><div><span class=dim>饱食</span><b>${s.food}</b>${petLine(s.pets)}</div><div><span class=dim>今日战功</span><b>${s.deeds_today??'-'}/${s.deeds_cap??4200}</b></div><div ${UNIT?'':'onclick="openQm()" style="cursor:pointer" title="点击用溢出战功兑换"'}><span class=dim>溢出战功${UNIT?'':' <span style="color:#f0c35a">兑换›</span>'}</span><b>${s.deeds_banked??'-'}</b></div>${runCell('深渊',s.abyss_left,s.abyss_max)}${runCell('迷雾',s.fog_left,s.fog_max)}</div>
  ${bar(s.hp,s.max_hp,'#d9534f','血量')}${bar(s.xp,s.xp_next,'#7b6cf0','经验（升下一级）')}${bar(s.ap,s.ap_max,'#3fb6d6','体力 AP')}
  <div class=dim>攻击 ${s.attack} · 防御 ${s.defense} · 暴击 ${s.crit}% · ${UNIT?'英雄 '+(hn||s.hero.kind||''):'主英雄 '+(hn||(s.hero.title&&s.hero.title.zh)||s.hero.kind||'')}${s.hero.path&&s.hero.path.zh?' · '+s.hero.path.zh:''}</div>
- <div class=dim style="margin-top:6px">队伍：${sq.map(h=>({starlit:'星辉',gold:'金',silver:'银',iron:'铁'}[h.grade]||h.grade||'')+({farmer:'农夫',miner:'矿工',hunter:'猎人',woodcutter:'樵夫',builder:'工匠'}[h.role]||h.role||h.kind)).join('、')||'无'}</div>`;
+ <div class=dim style="margin-top:6px">队伍：${sq.map(h=>({starlit:'星辉',gold:'金',silver:'银',iron:'铁'}[h.grade]||h.grade||'')+({farmer:'农夫',miner:'矿工',hunter:'猎人',woodcutter:'樵夫',builder:'工匠'}[h.role]||h.role||h.kind)).join('、')||'无'}</div>${UNIT?'':'<div class=row style="margin-top:10px"><button class=gold onclick="abpOpen()">🔥 深渊预设</button><span class=dim style="font-size:12px">预设深渊英雄和每人的深渊装备</span></div>'}`;
  const worn=Object.values(s.worn||{}).filter(Boolean);$('worn').innerHTML=worn.map(i=>card(i,'worn')).join('')||'<span class=dim>无</span>';
  $('gbc').textContent=`${(s.gear_bag||[]).length}/${s.gear_bag_max}`;$('gbag').innerHTML=(s.gear_bag||[]).map(i=>card(i,'bag')).join('')||'<span class=dim>空</span>';
  renderStores();
@@ -688,7 +766,7 @@ function tlTab(t){TLTAB=t;TLSEL=null;renderTl()}
 const PATHZH={hunt:'狩猎',gather:'采集',build:'建造'};
 function renderTl(){const T=TL||{};if(T.error){$('tlc').innerHTML='<div>'+T.error+'</div>';return}
  const h=T.hero||{},pts=h.points||0;const who=UNIT?('英雄 '+(T.name||'')):'主角 '+(T.name||ACCT);
- let o=`<h3 style="margin:0 0 8px;color:var(--acc);display:flex;justify-content:space-between">天赋 <span class=dim style="font-size:13px;font-weight:400">${ACCT} · ${who}</span></h3>
+ let o=`<h3 style="margin:0 0 8px;color:var(--acc);display:flex;justify-content:space-between">天赋 <span style="display:flex;align-items:center;gap:8px"><span class=dim style="font-size:13px;font-weight:400">${ACCT} · ${who}</span><button onclick="closeTl()">关闭 ✕</button></span></h3>
  <div class=stabs><span class="stb ${TLTAB=='hero'?'on':''}" onclick="tlTab('hero')">英雄天赋${pts>0?' <i class=rdot></i>':''}</span><span class="stb ${TLTAB=='abyss'?'on':''}" onclick="tlTab('abyss')">深渊天赋${!UNIT&&T.abyss_can?' <i class=rdot></i>':''}</span></div>`;
  if(TLTAB=='hero'){
   o+=`<div style="margin-bottom:8px">可用天赋点 <b style="color:${pts>0?'#ff6b5e':'var(--acc)'}">${pts}</b>${h.paragon_points?` · 巅峰点 <b>${h.paragon_points}</b>`:''} <span class=dim style="font-size:12px">每升一级 1 点；后面的天赋要本系投满 5/10/15 点才开放</span></div><div class=tlg>`;
@@ -738,7 +816,7 @@ function renderFx(){const f=FX||{},b=f.book||{},m=f.me||{},d=b.day||{};if(f.erro
  const asks=(b.asks||[]).slice(0,7).reverse(),bids=(b.bids||[]).slice(0,7);const NT=Math.max(8,asks.length+bids.length+1);const mx=Math.max(1,...asks.map(x=>x.qty),...bids.map(x=>x.qty));
  const row=(x,c)=>`<tr style="background:linear-gradient(to left,${c=='ask'?'rgba(255,122,107,.15)':'rgba(95,208,106,.15)'} ${x.qty/mx*100}%,transparent 0)"><td class=${c}>${x.price}</td><td>${x.qty}</td><td>${Math.round(x.price*x.qty)}</td></tr>`;
  const sp=(b.asks&&b.asks[0]&&b.bids&&b.bids[0])?(b.asks[0].price-b.bids[0].price):'-';
- let h=`<h3 style="margin:0 0 4px;color:var(--acc);display:flex;justify-content:space-between">金币交易所 <span class=dim style="font-size:13px;font-weight:400">${ACCT}</span></h3>
+ let h=`<h3 style="margin:0 0 4px;color:var(--acc);display:flex;justify-content:space-between">金币交易所 <span style="display:flex;align-items:center;gap:8px"><span class=dim style="font-size:13px;font-weight:400">${ACCT}</span><button onclick="closeFx()">关闭 ✕</button></span></h3>
  <div class=dim style="margin-bottom:10px">最新价 <b style="color:var(--acc);font-size:18px">${b.last_price??'-'}</b> BOLT/币 · 今日 ${d.trades??'-'} 笔 · ${d.coins??'-'} 币 · ${Number(d.bolt||0).toLocaleString()} BOLT · 手续费 ${b.fee||''}（从卖币方扣）</div>
  <div class=fxbox style="margin-bottom:12px"><div class=ivs style="margin-bottom:6px">${['15m','1h','4h','1d'].map(v=>`<span class="${FXIV==v?'on':''}" onclick="setIv('${v}')">${v}</span>`).join('')}<span style="border:none;cursor:default" class=dim>K 线（BOLT/币）· 柱为成交币数</span></div><canvas id=fxcv style="width:100%;height:220px"></canvas></div>
  <div class=fxg><div class=fxbox><div class=dim style="margin-bottom:4px">挂单（卖 / 买）· 价差 ${sp}</div><table class=fxt><tr><th>价格</th><th>数量(币)</th><th>合计BOLT</th></tr>${asks.map(x=>row(x,'ask')).join('')}<tr><td colspan=3 style="text-align:center;color:var(--acc)">— ${b.last_price??''} —</td></tr>${bids.map(x=>row(x,'bid')).join('')}</table></div>
@@ -822,7 +900,7 @@ function mkBidTbl(B,all){B=B.slice().sort((a,b)=>all?(a.goods<b.goods?-1:a.goods
 function tShort(t){if(/^\d{4}-\d\d-\d\dT/.test(String(t||''))){const d=new Date(new Date(t).getTime()+8*3600e3);if(!isNaN(d))return `${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`}const m=String(t||'').match(/(\d{4})-(\d\d)-(\d\d)\s+(\d{1,2}):(\d\d)\s*([AP]M)?/);if(!m)return t||'';let h=+m[4];if(m[6]=='PM'&&h<12)h+=12;if(m[6]=='AM'&&h==12)h=0;return `${m[2]}-${m[3]} ${String(h).padStart(2,'0')}:${m[5]}`}
 function mkTab(t){MX.type=t;MX.goods=null;MX.cur=null;loadMk()}
 function renderMk(){const d=MX.data||{};if(d.error){$('mkc').innerHTML='<div>'+d.error+'</div>';return}
- let h=`<div class=row style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><h3 style="margin:0">🏪 营地交易所</h3><span>主角金币 <b style="color:#f0c35a">${d.coins??'-'}</b> · ${d.in_camp?'<span class=up>在营地</span>':'<span class=down>不在营地，不能购买</span>'}</span><button onclick="$('mk').style.display='none'">关闭</button></div>
+ let h=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:nowrap"><div style="min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px"><h3 style="margin:0">🏪 营地交易所</h3><span style="font-size:13px">主角金币 <b style="color:#f0c35a">${d.coins??'-'}</b> · ${d.in_camp?'<span class=up>在营地</span>':'<span class=down>不在营地，不能购买</span>'}</span></div><button style="flex:none;margin-left:auto" onclick="$('mk').style.display='none'">关闭 ✕</button></div>
  <div class=row style="gap:6px;margin:8px 0"><button class="${MX.type=='goods'?'on':''}" onclick="mkTab('goods')">物品</button><button class="${MX.type=='gear'?'on':''}" onclick="mkTab('gear')">装备</button><button class="${MX.type=='bids'?'on':''}" onclick="mkTab('bids')">求购单</button><span class=dim>市场抽成 ${Math.round((d.fee||0.06)*100)}%（卖方付）</span></div>`;
  if(MX.type=='goods'){
   if(!MX.goods){const gr=d.groups||{};const sm=(d.summary&&d.summary.goods)||[];const keys=['all'].concat(Object.keys(gr));
@@ -855,6 +933,87 @@ function mkDetail(x){const it=x.item;const c=RC[it.rarity]||'#888';const af=(it.
  openDlg(`<h3 style="margin:0;color:${c}">${it.name_zh||it.name}</h3><div class=dim>${SN[it.slot]||it.slot} · L${it.level} · ${RN[it.rarity]||it.rarity}${it.unidentified?' · 未鉴定':''}</div>${it.damage!=null?'<div>伤害 '+it.damage+'</div>':''}${it.armor!=null?'<div>护甲 '+it.armor+'</div>':''}${it.implicit?'<div>固有：'+(it.implicit.name_zh||it.implicit.name||it.implicit.id)+' '+(it.implicit.value??'')+'</div>':''}${af}<div>耐久 ${it.durability}/${it.durability_max}</div><div style="margin-top:6px">售价 <b style="color:#f0c35a">${x.price}</b> 币 · 卖家 ${x.seller}</div><div class=row><button ${MX.data.in_camp?'':'disabled'} onclick="closeDlg();mkBuyGear(${MX.data.listings.indexOf(x)})">买</button><button onclick="closeDlg()">关闭</button></div>`)}
 function mkBuyGear(i){const x=MX.data.listings[i];mkPost({action:'buy',listing:x.id},`花 ${x.price} 币买「${x.item.name_zh||x.item.name}」（${x.seller}）？`)}
 function openDlg(h){$('dlgc').innerHTML=h;$('dlg').style.display='flex'}function closeDlg(){$('dlg').style.display='none'}
+// 2026-11-18 深渊配装卡片：GET /api/abyss_team（代理 /world/abyss/team），只在展开时读取
+const ABR=['plain','runed','treasured','mythic','set'],ABSLOT=['weapon','offhand','head','chest','hands','legs','feet','ring','amulet','tool'];
+const ABSET={abyssal:'Abyssal Vanguard',hollowcrown:"Hollow King's Regalia"};
+let ABK=null,ABKOPEN=false,ABKSEQ=0;
+function abkTog(){ABKOPEN=!ABKOPEN;$('abkc').style.display=ABKOPEN?'block':'none';$('abks').textContent=ABKOPEN?'收起 ▾':'点击展开（打开时才读取）▸';if(ABKOPEN)loadAbk()}
+async function loadAbk(){const a=ACCT,seq=++ABKSEQ;$('abkc').innerHTML='<span class=dim>读取中…</span>';let d;try{d=await j('/api/abyss_team?acct='+a)}catch(e){d=null}if(seq!=ABKSEQ||a!=ACCT)return;
+ if(!d||d.error){$('abkc').innerHTML='<span class=down>读取失败 '+((d&&d.error)||'')+'</span> <button onclick="loadAbk()">重试</button>';return}ABK=d;renderAbk()}
+function abkItem(g){if(!g)return '<span class=dim>空（未配）</span>';const r=typeof g.rarity=='number'?ABR[g.rarity]:g.rarity,c=RC[r]||'#ccc';
+ const st=g.set?(ABSET[g.set]||g.set):'';return `<span style="color:${c};font-weight:600">${g.name_zh||g.name}</span> <span class=dim>L${g.ilvl!=null?g.ilvl:(g.level||'?')} · ${RN[r]||r}${st?' · '+st:''}</span>${g.mythic_power_off?' <span class=down title="神话特效在深渊不生效">特效失效</span>':''}${g.durability_max?` <span class=dim>耐久 ${g.durability}/${g.durability_max}</span>`:''}<br><span class=dim style="font-size:11px">来源：${g.src||'某英雄身上/未在主号背包仓库'}</span>`}
+function renderAbk(){const d=ABK,t=d.team||{},hs=(t.heroes||[]).slice(),mn=d.main||{};
+ const mi=hs.findIndex(h=>h.id==mn.id);if(mi>0)hs.unshift(hs.splice(mi,1)[0]);
+ let h=`<div class=dim style="margin-bottom:8px">队伍${t.saved?'已保存':'<b class=down>未保存</b>（进入时按原小队）'} · ${hs.length} 人（可 ${t.least}–${t.most}，含主号）<br>⚠️ 队员身上神话装备的特效在深渊不生效，只有深渊三套（Abyssal Vanguard、Hollow King's Regalia、Frost Seer's Shroud）给套装加成；主号保留自己的全部效果。队伍在深渊里时配装不能改。</div>`;
+ h+=`<div class=row style="margin:0 0 10px"><button class=gold onclick="abkAuto()">一键自动配装（整队）</button><button onclick="loadAbk()">刷新</button></div>`;
+ h+=`<div class=it style="cursor:default;border-left-color:#e0524a;margin-bottom:8px"><div class=n>主号 ${mn.name||''} #${mn.id||'?'} <span class=dim>Lv${mn.level||'?'} ${mn.grade=='lord'?'领主':(GRD[mn.grade]||mn.grade||'')} ${ROL[mn.role]||mn.role||''}</span></div><div class=s>主号用自己身上穿的装备进深渊，不走深渊配装，神话特效保留</div></div>`;
+ if(!hs.length)h+='<span class=dim>没有保存深渊队伍，进入时用当前小队，各英雄用身上穿的。</span>';
+ h+='<div class=grid style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">'+hs.map(x=>{const n=x.numbers||{},gr=x.grade=='lord'?'领主':(GRD[x.grade]||x.grade);
+  const rows=ABSLOT.filter(k=>k!='tool'||(x.gear||{}).tool).map(k=>{const g=(x.gear||{})[k];return `<tr><td class=dim style="width:44px">${SN[k]||k}</td><td style="white-space:normal">${x.kit?abkItem(g):(g?abkItem(g):'<span class=dim>用身上穿的</span>')}</td></tr>`}).join('');
+  return `<div class=it style="cursor:default;border-left-color:${x.grade=='lord'?'#e0524a':x.grade=='starlit'?'#b36bff':x.grade=='gold'?'#f0c35a':x.grade=='silver'?'#4cd964':'#ddd'}"><div class=n>#${x.id} ${x.id==mn.id?'<b class=up>主号</b> ':''}<span class=dim>Lv${x.level} ${gr||''}${x.rank!=null?' '+x.rank+'阶':''} ${ROL[x.role]||x.role||''}${x.out_on_its_own?' · 单独在外':''}</span></div>
+  <div class=s>${x.kit?'深渊专属配装':'未配深渊装，用身上穿的'} · 攻击 <b>${n.attack??'-'}</b> 血量 <b>${n.health??'-'}</b> 护甲 <b>${n.armor??'-'}</b> 暴击 <b>${n.crit??'-'}%</b></div>
+  <div class=tw><table style="min-width:0;font-size:12px">${rows}</table></div>${x.kit?`<div class=row style="margin-top:6px"><button onclick="abkClear(${x.id})">恢复身上装备</button></div>`:''}</div>`}).join('')+'</div>';
+ if((t.others||[]).length)h+=`<div class=dim style="margin-top:8px">队伍外可选英雄：${t.others.map(o=>'#'+o.id+' Lv'+o.level+' '+(o.grade=='lord'?'领主':(GRD[o.grade]||o.grade))).join('，')}</div>`;
+ $('abkc').innerHTML=h}
+async function abkPost(b,msg){if(!await ask(msg))return;const r=await j('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acct:ACCT,body:b})});
+ const ok=r&&r.result&&r.result.success;toast(ok?'已完成':'失败：'+((r&&(r.error||(r.result&&(r.result.error||r.result.message))))||'未知'),5000);loadAbk()}
+function abkAuto(){abkPost({action:'abyss',do:'kit',auto:true},'用你持有的最好装备给深渊队伍整队自动配装？（不花金币，只改深渊配装，不动身上穿的）')}
+function abkClear(id){abkPost({action:'abyss',do:'kit',hero:id,clear:true},'把英雄 #'+id+' 的深渊配装恢复成身上穿的？')}
+// 2026-11-20 深渊预设：主角英雄卡片按钮 → 选深渊英雄 + 每位英雄的深渊配装（GET /api/abyss_team?full=1，懒加载）
+let ABP=null,ABPSEL=[],ABPSEQ=0,ABPDIRTY=false;
+const ABPSETN=['Abyssal Vanguard',"Hollow King's Regalia","Frost Seer's Shroud"],ABPGR={lord:5,starlit:4,gold:3,silver:2,iron:1},ABPRR={mythic:5,set:4,treasured:3,runed:2,plain:1},ABPSETS=['abyssal','hollowcrown','frostseer'];
+function abpAby(p){return ABPSETS.includes(p.set)||ABPSETN.includes(p.set_name)}
+function abpGr(g){return g=='lord'?'领主':(GRD[g]||g||'')}
+function abpOpen(){if(UNIT)return;$('abp').style.display='flex';document.body.style.overflow='hidden';ABPDIRTY=false;loadAbp()}
+function abpClose(){$('abp').style.display='none';document.body.style.overflow=''}
+async function loadAbp(silent){const a=ACCT,seq=++ABPSEQ;silent=silent===true&&ABP;const st=$('abp').scrollTop;$('abpt').textContent='深渊预设 · '+a+(silent?' · 更新中…':'');if(!silent)$('abpc').innerHTML='<div class=dim style="padding:20px 0">读取中…（要逐个读取英雄身上和背包的装备，约需几秒）</div>';
+ let d;try{d=await j('/api/abyss_team?full=1&acct='+encodeURIComponent(a))}catch(e){d=null}if(seq!=ABPSEQ||a!=ACCT)return;$('abpt').textContent='深渊预设 · '+a;
+ if(silent&&(!d||d.error||!d.team)){toast('刷新失败，显示的是上次数据');return}
+ if(!d||d.error||!d.team){$('abpc').innerHTML='<span class=down>读取失败 '+((d&&d.error)||'')+'</span> <button onclick="loadAbp()">重试</button>';return}
+ const keep=silent&&ABPDIRTY?ABPSEL.slice():null;ABP=d;const t=d.team;ABPSEL=t.saved?(t.heroes||[]).map(x=>x.id).filter(i=>i!=(d.main||{}).id):[];if(keep){ABPSEL=keep}else{ABPDIRTY=false}renderAbp();if(silent)$('abp').scrollTop=st}
+function abpAll(){const d=ABP,t=d.team||{},nm={};(d.units||[]).forEach(u=>nm[u.id]=u);const m={};
+ (t.heroes||[]).concat(t.others||[]).forEach(x=>{if(x.id!=(d.main||{}).id&&!m[x.id])m[x.id]={id:x.id,grade:x.grade,level:x.level,role:x.role,rank:x.rank,kind:x.kind,name:(nm[x.id]||{}).name,out:x.out_on_its_own}});
+ (d.units||[]).forEach(u=>{if(!m[u.id]&&u.id!=(d.main||{}).id)m[u.id]={id:u.id,level:u.level,name:u.name}});return m}
+function abpStr(x){return (ABPGR[x.grade]||0)*1000+(x.level||0)}
+function abpTog(id,on){const i=ABPSEL.indexOf(id);if(on&&i<0){if(ABPSEL.length>=9){toast('最多 9 位英雄');renderAbp();return}ABPSEL.push(id)}if(!on&&i>=0)ABPSEL.splice(i,1);ABPDIRTY=true;renderAbp()}
+function abpMv(id,dz){const i=ABPSEL.indexOf(id),k=i+dz;if(i<0||k<0||k>=ABPSEL.length)return;ABPSEL.splice(i,1);ABPSEL.splice(k,0,id);ABPDIRTY=true;renderAbp()}
+function abpSort(){const m=abpAll();ABPSEL.sort((a,b)=>abpStr(m[b]||{})-abpStr(m[a]||{}));ABPDIRTY=true;renderAbp()}
+function abpSave(){const m=abpAll(),n=ABPSEL.length;if(n<4||n>9)return toast('需选 4–9 位英雄（不含主号）');
+ abpPost({action:'abyss',do:'team',heroes:ABPSEL.slice()},'保存深渊队伍（按此顺序，强的在前）：\n'+ABPSEL.map((i,k)=>(k+1)+'. #'+i+' Lv'+((m[i]||{}).level??'?')+' '+abpGr((m[i]||{}).grade)).join('\n')+'\n\n只改深渊队伍，不会进入深渊。')}
+function abpSquad(){abpPost({action:'abyss',do:'team',heroes:'squad'},'把深渊队伍恢复为“跟随小队”（不再用预设的英雄名单）？')}
+function abpKitAuto(id){abpPost({action:'abyss',do:'kit',hero:id,auto:true},'用你持有的最好装备给英雄 #'+id+' 自动配深渊装？（不花金币，不动身上穿的）')}
+function abpKitClear(id){abpPost({action:'abyss',do:'kit',hero:id,clear:true},'把英雄 #'+id+' 的深渊配装恢复成身上穿的？')}
+function abpTeamAuto(){abpPost({action:'abyss',do:'kit',auto:true},'用你持有的最好装备给深渊队伍整队自动配装？（不花金币，只改深渊配装，不动身上穿的）')}
+async function abpSet(sel,hid,slot){const v=sel.value,prev=sel.dataset.cur;if(v==='')return;const it=v=='null'?null:+v;
+ const p=it==null?null:(ABP.pool||[]).find(x=>x.id==it);const msg=it==null?`清空英雄 #${hid} 的深渊「${SN[slot]||slot}」格？`:`英雄 #${hid} 的深渊「${SN[slot]||slot}」改用：${p?(p.name_zh+' L'+p.level+'（'+p.src+'）'):'#'+it}？\n（只改深渊配装，装备不会被移动）`;
+ if(!await abpPost({action:'abyss',do:'kit',hero:hid,slot:slot,item:it},msg))sel.value=prev}
+async function abpPost(b,msg){if(!await ask(msg))return false;let r;try{r=await j('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acct:ACCT,body:b})})}catch(e){r=null}
+ const ok=r&&r.result&&r.result.success;toast(ok?'已完成':'失败：'+((r&&(r.error||(r.result&&(r.result.error||r.result.message))))||'未知'),5000);if(ok&&b.do=='team')ABPDIRTY=false;loadAbp(true);return true}
+function abpOpts(x,slot,used){const d=ABP,mw=new Set(d.main_worn||[]),g=(x.gear||{})[slot],cur=x.kit&&g?g.id:'';
+ const ps=(d.pool||[]).filter(p=>p.slot==slot&&!mw.has(p.id)&&(p.level==null||p.level<=(x.level||0)+2)).sort((a,b)=>(abpAby(b)-abpAby(a))||((ABPRR[b.rarity]||0)-(ABPRR[a.rarity]||0))||((b.level||0)-(a.level||0)));
+ let h=x.kit?'':`<option value="" selected>— 用身上穿的${g?'：'+(g.name_zh||g.name):''} —</option>`;
+ h+=`<option value="null" ${x.kit&&!g?'selected':''}>空</option>`;
+ if(cur&&!ps.some(p=>p.id==cur))h+=`<option value="${cur}" selected>${g.name_zh||g.name} L${g.ilvl??g.level??'?'}（当前）</option>`;
+ const bz=p=>(used[p.id]&&used[p.id]!=x.id)?1:0;ps.sort((a,b)=>bz(a)-bz(b));h+=ps.map(p=>{const o=used[p.id],dis=o&&o!=x.id;return `<option value="${p.id}" ${p.id==cur?'selected':''} ${dis?'disabled':''}>${abpAby(p)?'★':''}${p.name_zh} L${p.level??'?'} ${RN[p.rarity]||p.rarity||''}${p.set_name_zh?' · '+p.set_name_zh:''}${p.damage!=null?' 伤'+p.damage:''}${p.armor!=null?' 甲'+p.armor:''}${p.broken?' 已损坏':''} · ${p.src}${dis?'（已在 #'+o+'）':''}</option>`}).join('');
+ return {h,cur:x.kit?(g?String(g.id):'null'):''}}
+function renderAbp(){const d=ABP,t=d.team||{},mn=d.main||{},all=abpAll(),list=Object.values(all).sort((a,b)=>abpStr(b)-abpStr(a));
+ const n=ABPSEL.length,okn=n>=4&&n<=9;
+ let h=`<div class=dim style="margin-bottom:10px;font-size:12.5px">主号 <b>${mn.name||''}</b> #${mn.id||'?'} Lv${mn.level||'?'} 固定参战，用自己身上的装备。深渊里队员神话装备的特效不生效，只有深渊三套（Abyssal Vanguard、Hollow King's Regalia、Frost Seer's Shroud，选项里标 ★）有套装加成。队伍在深渊里时队伍和配装都不能改。所有修改都只改预设，不会进入深渊。</div>`;
+ h+=`<h4 style="margin:6px 0;color:var(--acc)">① 深渊英雄 <span class=dim style="font-size:12px;font-weight:normal">当前：${t.saved?'已保存预设':'跟随小队'} · 已选 <b class="${okn?'up':'down'}">${n}</b>/9（需 4–9 位，强的在前）${ABPDIRTY?' · <b class=down>未保存</b>':''}</span></h4>`;
+ h+='<div class=abpl>'+ABPSEL.map((id,k)=>{const x=all[id]||{id};return `<div class="abpr on"><label><input type=checkbox checked onchange="abpTog(${id},this.checked)"> <b>${k+1}.</b> #${id} ${x.name?'<span class=dim>'+x.name+'</span> ':''}Lv${x.level??'?'} ${abpGr(x.grade)}${x.rank!=null?' '+x.rank+'阶':''} ${ROL[x.role]||''}</label><span><button onclick="abpMv(${id},-1)" ${k?'':'disabled'}>↑</button><button onclick="abpMv(${id},1)" ${k<n-1?'':'disabled'}>↓</button></span></div>`}).join('')
+  +list.filter(x=>!ABPSEL.includes(x.id)).map(x=>`<div class=abpr><label><input type=checkbox onchange="abpTog(${x.id},this.checked)"> #${x.id} ${x.name?'<span class=dim>'+x.name+'</span> ':''}Lv${x.level??'?'} ${abpGr(x.grade)}${x.rank!=null?' '+x.rank+'阶':''} ${ROL[x.role]||''}</label></div>`).join('')+'</div>';
+ h+=`<div class=row style="margin:8px 0 14px"><button onclick="abpSort()">按强度排序</button><button class=gold ${okn?'':'disabled'} onclick="abpSave()">保存队伍</button><button onclick="abpSquad()">恢复跟随小队</button></div>`;
+ const hs=(t.heroes||[]).filter(x=>x.id!=mn.id),used={};hs.forEach(x=>{if(x.kit)Object.values(x.gear||{}).forEach(g=>{if(g&&g.id)used[g.id]=x.id})});
+ h+=`<h4 style="margin:6px 0;color:var(--acc)">② 每位英雄的深渊装备 <span class=dim style="font-size:12px;font-weight:normal">${t.saved?'':'（未保存预设，下面是当前小队）'}可选：你和英雄们持有的（背包/仓库/身上），最高比英雄高 2 级，不含主号身上的，一件只能配一人</span></h4>`;
+ h+=`<div class=row style="margin:0 0 10px"><button class=gold onclick="abpTeamAuto()">一键自动配装（整队）</button><button onclick="loadAbp()">刷新</button></div>`;
+ if((d.pool_missing||[]).length)h+=`<div class=down style="font-size:12px;margin-bottom:6px">有 ${d.pool_missing.length} 位英雄的装备没读到（#${d.pool_missing.join('、#')}），点刷新重试。</div>`;
+ if(!hs.length)h+='<span class=dim>还没有深渊队伍，先在上面选英雄并保存。</span>';
+ h+='<div class=abpg>'+hs.map(x=>{const nn=x.numbers||{},nm=(all[x.id]||{}).name;
+  const rows=ABSLOT.map(k=>{const o=abpOpts(x,k,used);if(k=='tool'&&!(x.gear||{}).tool&&o.h.split('<option').length<=3)return '';return `<div class=abps><span class=dim>${SN[k]||k}</span><select data-cur="${o.cur}" onchange="abpSet(this,${x.id},'${k}')">${o.h}</select></div>`}).join('');
+  return `<div class=it style="cursor:default;border-left-color:${x.grade=='lord'?'#e0524a':x.grade=='starlit'?'#b36bff':x.grade=='gold'?'#f0c35a':x.grade=='silver'?'#4cd964':'#ddd'}"><div class=n>#${x.id} ${nm?'<span class=dim>'+nm+'</span> ':''}<span class=dim>Lv${x.level} ${abpGr(x.grade)}${x.rank!=null?' '+x.rank+'阶':''} ${ROL[x.role]||x.role||''}${x.out_on_its_own?' · 单独在外':''}</span></div>
+  <div class=s style="margin:2px 0 6px">${x.kit?'<span class=up>深渊专属配装</span>':'未配深渊装，用身上穿的'} · 攻击 <b>${nn.attack??'-'}</b> 血量 <b>${nn.health??'-'}</b> 护甲 <b>${nn.armor??'-'}</b> 暴击 <b>${nn.crit??'-'}%</b></div>
+  ${rows}<div class=row style="margin-top:6px"><button class=gold onclick="abpKitAuto(${x.id})">一键自动</button>${x.kit?`<button onclick="abpKitClear(${x.id})">恢复身上装备</button>`:''}</div></div>`}).join('')+'</div>';
+ $('abpc').innerHTML=h}
 async function post(body){return j('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acct:ACCT,body:UNIT?Object.assign({unit:UNIT},body):body})})}
 function errText(r){if(r.error&&!r.result)return r.error;const d=r.result||{};return d.error||d.message||d.hint||JSON.stringify(d).slice(0,200)}
 async function act(body,label){const p0=ST.power,q0=ST.squad_power;const r=await post(body);
