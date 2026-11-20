@@ -449,7 +449,7 @@ class H(BaseHTTPRequestHandler):
             acct, body = j.get("acct"), j.get("body") or {}
             if acct not in ACCTS or body.get("action") not in ALLOWED:
                 return self.send(400, {"error": "不允许的操作"})
-            body = {k: v for k, v in body.items() if k in ("action", "item", "goods", "qty", "price", "per", "listing", "slot", "unit", "items", "store", "tribe", "do", "box", "talent", "points", "node", "pick", "hero", "listing", "max_each", "pet", "meat", "order", "mode")}
+            body = {k: v for k, v in body.items() if k in ("action", "item", "goods", "qty", "price", "per", "listing", "slot", "unit", "items", "store", "tribe", "do", "box", "talent", "points", "node", "pick", "hero", "listing", "max_each", "pet", "meat", "order", "mode", "with")}  # 2026-11-20 15:10 修复：之前 with 被过滤掉，材料修理变成金币修
             if body.get("action") == "repair" and (not isinstance(body.get("item"), int) or body.get("with") not in (None, "materials")): return self.send(400, {"error": "修理参数不对"})
             if body.get("action") == "bounty": body = {"action": "bounty", **({"unit": body["unit"]} if "unit" in body else {})}  # 2026-11-20 悬赏一键领取
             if body.get("action") == "deliver":  # 2026-11-20 订单提交：选订单+数量
