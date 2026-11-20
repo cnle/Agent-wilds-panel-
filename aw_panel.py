@@ -218,7 +218,7 @@ def token_ok(h):
     ck = h.headers.get("Cookie", "")
     for part in ck.split(";"):
         k, _, v = part.strip().partition("=")
-        if k == "awp" and hmac.compare_digest(v, hmac.new(SECRET, b"ok", hashlib.sha256).hexdigest()):
+        if k == "awp" and hmac.compare_digest(v.encode("utf-8","replace"), hmac.new(SECRET, b"ok", hashlib.sha256).hexdigest().encode()):
             return True
     return False
 
@@ -410,11 +410,13 @@ class H(BaseHTTPRequestHandler):
             now = time.time(); f = [t for t in FAILS.get(ip, []) if now - t < 900]; FAILS[ip] = f
             if len(f) >= 5: return self.send(429, LOCKED, "text/html; charset=utf-8")
             pq = parse_qs(raw); p = pq.get("p", [""])[0]
+            import unicodedata; p = unicodedata.normalize("NFKC", p).strip()  # 2026-11-20 全角/中文输入不再 500
+            pwok = bool(PASSWORD) and hmac.compare_digest(p.encode("utf-8"), str(PASSWORD).encode("utf-8"))
             if not hcaptcha_ok(pq.get("h-captcha-response", [""])[0], ip):
                 f.append(now); time.sleep(1); return self.send(200, LOGIN.replace("进入</button>", "进入</button><div style=\"color:#ff7a6b;margin-top:8px\">请先完成人机验证</div>"), "text/html; charset=utf-8")
-            if not (PASSWORD and hmac.compare_digest(p, PASSWORD)):
+            if not pwok:
                 f.append(now); time.sleep(1)
-            if PASSWORD and hmac.compare_digest(p, PASSWORD):
+            if pwok:
                 FAILS.pop(ip, None)
                 tok = hmac.new(SECRET, b"ok", hashlib.sha256).hexdigest()
                 return self.send(302, "", extra={"Location": "/", "Set-Cookie": "awp=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000%s" % (tok, "; Secure" if (self.headers.get("X-Forwarded-Proto") == "https" or "https" in (self.headers.get("CF-Visitor") or "")) else "")})
