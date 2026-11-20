@@ -87,6 +87,42 @@ def api(acct, method, path, body=None):
             if i < 3: time.sleep(2); continue
             return 0, {"error": str(e)}
 
+MKT_CACHE = {}; MKT_ME = {}  # 交易所缓存：行情 25s，金币/在营地 45s；429 时回旧缓存
+def _mkt_me(acct):
+    t = time.time(); v = MKT_ME.get(acct)
+    if v and t - v[0] < 45: return v[1]
+    c2, d2 = api(acct, "GET", "/world/me"); m = (d2 or {}).get("me") or {}
+    if c2 == 200: v = (t, {"coins": m.get("coins"), "in_camp": m.get("ring") == "camp"}); MKT_ME[acct] = v
+    return (v or (0, {}))[1]
+def mkt_fetch(acct, qs):
+    k = (acct, qs); t = time.time(); v = MKT_CACHE.get(k)
+    if v and t - v[0] < 25: d = dict(v[1]); d.update(_mkt_me(acct)); d["cached"] = int(t - v[0]); return 200, d
+    box = {}
+    th = threading.Thread(target=lambda: box.setdefault("me", _mkt_me(acct))); th.start()
+    req = urllib.request.Request(BASE + "/world/market" + ("?" + qs if qs else ""), headers={"Authorization": "Bearer " + KEYS[acct], "User-Agent": "aw-panel/1"})
+    c, d = 0, {}
+    for i in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=12) as r: c, d = r.status, json.loads(r.read().decode() or "{}"); break
+        except urllib.error.HTTPError as e:
+            c = e.code
+            try: d = json.loads(e.read().decode(errors="ignore"))
+            except Exception: d = {"error": "HTTP %s" % e.code}
+            if e.code in (429, 502, 503, 504) and i == 0 and not v: time.sleep(min(float(d.get("retry_after", 2) or 2), 4)); continue
+            break
+        except Exception as e:
+            c, d = 0, {"error": str(e)}
+            if i == 0 and not v: continue
+            break
+    th.join(8)
+    if c == 200:
+        d.pop("trades", None); MKT_CACHE[k] = (time.time(), d)
+        if len(MKT_CACHE) > 300: MKT_CACHE.clear()
+        d = dict(d)
+    elif v: d = dict(v[1]); d["cached"] = int(t - v[0]); d["stale"] = 1
+    else: return (c or 502), {"error": "游戏服务器忙（%s），请稍后再点" % (c or "超时")}
+    d.update(box.get("me") or MKT_ME.get(acct, (0, {}))[1]); return 200, d
+
 GRADE_CACHE = {}  # (acct, hero_id) -> grade; grades never change
 GRADE_BUSY = set()
 def _grade_fill(acct, need):
@@ -270,11 +306,7 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/api/mkt":
             qq = {k: (q.get(k) or [""])[0] for k in ("type", "goods", "slot", "rarity", "sort", "cursor")}
             qs = "&".join("%s=%s" % (k, urllib.parse.quote(v)) for k, v in qq.items() if v and re.fullmatch(r"[a-z0-9_]{1,40}", v))
-            c, d = api(acct, "GET", "/world/market" + ("?" + qs if qs else ""))
-            if c != 200: return self.send(c or 502, d)
-            c2, d2 = api(acct, "GET", "/world/me"); m = (d2 or {}).get("me") or {}
-            d["coins"] = m.get("coins"); d["in_camp"] = m.get("ring") == "camp"; d.pop("trades", None)
-            return self.send(200, d)
+            return self.send(*mkt_fetch(acct, qs))
         if u.path == "/api/qm":
             c, d = api(acct, "GET", "/world/quartermaster")
             if c != 200: return self.send(c or 502, d)
@@ -513,6 +545,9 @@ class H(BaseHTTPRequestHandler):
             if "tribe" in body and body["tribe"] is not True: body.pop("tribe")
             if "unit" in body and not isinstance(body["unit"], int): body.pop("unit")
             MEP = "/world/me" + ("?unit=%d" % body["unit"] if "unit" in body else "")
+            if body.get("action") == "stash" and body.get("tribe") is True:  # 2026-11-21 04:57 user: no take right -> can't deposit
+                me = ((api(acct, "GET", MEP)[1] or {}).get("me")) or {}
+                if me.get("tribe_stash_can_take") is False: return self.send(403, {"error": "你没有部落装备库取出权限，存入后取不回来，已禁止存入"})
             if body.get("action") == "discard":
                 me = ((api(acct, "GET", MEP)[1] or {}).get("me")) or {}
                 it = next((i for i in (me.get("gear_bag") or []) if i.get("id") == body.get("item")), None)
@@ -815,6 +850,13 @@ function renderMarket(){const m=MK||{};const L=m.listings||[],T=m.trades||[];
  h+=T.slice(0,60).map(t=>`<tr><td class=dim>${(t.at||'').replace(/ CST.*/,'')}</td><td>${itemName(t)}</td><td>${t.qty}</td><td>${t.each}</td><td>${t.total}</td><td>${t.fee}</td><td class=dim>${t.buyer}</td></tr>`).join('')||'<tr><td colspan=7 class=dim>暂无</td></tr>';
  $('market').innerHTML=h+'</table></div>'}
 function find(src,id){if(src=='tstash')return (((STO||{}).tstash||{}).items||[]).find(i=>i.id==id);if(src=='abox')return ((STO||{}).abox||[]).find(i=>(i.box_id??i.id)==id);if(src=='uworn')return Object.values((UST||{}).worn||{}).find(i=>i&&i.id==id);if(src=='ubag')return ((UST||{}).gear_bag||[]).find(i=>i.id==id);const s=ST;if(src=='worn')return Object.values(s.worn||{}).find(i=>i&&i.id==id);if(src=='bag')return (s.gear_bag||[]).find(i=>i.id==id);return (s.stash||[]).find(i=>i.id==id)}
+function gemBox(it){const n=it.sockets||0;if(!n)return '';const g=it.gems||[];const L=it.links||0;let b='';for(let i=0;i<n;i++){const x=g[i];b+=`<span title="${x?(x.name_zh||x.gem)+(x.adds?' '+(x.adds.name_zh||x.adds.name)+' +'+x.adds.value:''):'空孔'}" style="display:inline-block;width:18px;height:18px;border:2px solid ${i<L&&L>1?'#f0c35a':'#8a7d6a'};background:${x?(x.color||'#888'):'transparent'};margin-right:${i<L-1&&L>1?'0':'4px'};vertical-align:middle"></span>`+(i<L-1&&L>1?'<span style="display:inline-block;width:6px;height:2px;background:#f0c35a;vertical-align:middle"></span>':'')}
+ let h=`<div style="margin-top:6px">孔位 ${b} <span class=dim>${n} 孔 · ${L} 连</span></div>`;h+=g.map(x=>`<div class=dim style="font-size:13px"><span style="color:${x.color||'#ccc'}">◆ ${x.name_zh||x.gem}</span>${x.adds?' '+(x.adds.name_zh||x.adds.name)+' +'+x.adds.value:''}</div>`).join('');return h}
+function fxHtml(it){let h='';const bs=it.beast;if(bs){const r=bs.rank||0,m=bs.most||5;h+=`<div style="margin-top:6px;color:#ffb27a">兽印 <span style="letter-spacing:1px">${'■'.repeat(Math.min(r,m))}${'□'.repeat(Math.max(m-r,0))}</span> ${bs.does_zh||bs.does||''}</div>`}
+ if(it.power_zh||it.power)h+=`<div style="margin-top:6px;color:#ff8a5c">✦ 特效：${it.power_zh||it.power}</div>`;
+ for(const k of ['corrupt','corrupted','runeword','enchant','mod']){const v=it[k];if(v&&typeof v=='object'){const t=v.name_zh||v.does_zh||v.text_zh||v.name||v.does||'';if(t)h+=`<div style="margin-top:4px;color:#c58cff">${k=='runeword'?'符文之语':k.startsWith('corrupt')?'腐化':'附魔'}：${t}${v.does_zh&&v.name_zh?' — '+v.does_zh:''}</div>`}else if(v===true&&k.startsWith('corrupt'))h+=`<div style="margin-top:4px;color:#c58cff">已腐化</div>`}
+ if(it.set_name_zh)h+=`<div style="margin-top:6px;color:#5fd06a">${it.set_name_zh}</div>`+(it.set_bonus||[]).map(b=>`<div class=dim>${b.pieces}件：${b.affixes.map(a=>(a.name_zh||a.name)+' '+a.value).join('，')}</div>`).join('');
+ h+=gemBox(it);if(it.lore_zh)h+=`<div class=dim style="margin-top:6px;font-style:italic">“${it.lore_zh}”${it.lore_by_zh?' — '+it.lore_by_zh:''}</div>`;return h}
 function aff(a){return `<div>${a.name_zh||a.name} <b>${a.value}</b>${a.tier?` <span class=dim>T${a.tier}</span>`:''}</div>`}
 function detail(src,id){if(src=='mk'){const x=((MX.data||{}).listings||[]).find(l=>l.item&&l.item.id==id);if(x)mkDetail(x);return}const it=find(src,id);if(!it)return;const c=RC[it.rarity]||'#888';
  let h=`<h3 style="margin:0;color:${c}">${it.name_zh||it.name}</h3><div class=dim>${it.name}</div><div class=dim>${SN[it.slot]||it.slot} · L${it.level} · ${RN[it.rarity]||it.rarity}${it.quality?' · 品质 '+it.quality+'%':''}</div>
@@ -828,9 +870,7 @@ function detail(src,id){if(src=='mk'){const x=((MX.data||{}).listings||[]).find(
  if(it.grants)h+=it.grants.map(aff).join('');
  if(it.affixes&&it.affixes.length)h+=`<div class=dim style="margin-top:6px">词缀</div>`+it.affixes.map(aff).join('');
  if(it.unidentified)h+=`<div class=dim>未鉴定，词缀未知${src=='abox'?'（领到背包后才能在营地鉴定）':''}</div>`;
- if(it.sockets)h+=`<div class=dim>孔 ${it.sockets} · 链 ${it.links||0} · 宝石 ${(it.gems||[]).length}</div>`;
- if(it.set_name_zh)h+=`<div style="margin-top:6px;color:#5fd06a">${it.set_name_zh}</div>`+(it.set_bonus||[]).map(b=>`<div class=dim>${b.pieces}件：${b.affixes.map(a=>(a.name_zh||a.name)+' '+a.value).join('，')}</div>`).join('');
- if(it.power_zh)h+=`<div style="margin-top:6px">${it.power_zh}</div>`;
+ h+=fxHtml(it);
  h+=`<div class=row>`;
  if(src[0]=='u'){h+=`</div><div class=dim style="margin-top:6px">英雄身上的装备，只读</div><div class=row><button class=gold onclick="openUnit(${UST.hero.id})">返回英雄</button><button onclick="closeDlg()">关闭</button></div>`;openDlg(h);return}
  if(it.unidentified&&src!='abox'&&src!='tstash')h+=`<button class=gold onclick="identify(${id},'${(it.name_zh||it.name).replace(/'/g,'')}',${5+2*(it.level||0)})">鉴定（${5+2*(it.level||0)} 币）</button></div><div class=row>`;
@@ -838,7 +878,7 @@ function detail(src,id){if(src=='mk'){const x=((MX.data||{}).listings||[]).find(
  if(src=='bag')h+=`<button class=gold onclick="act({action:'equip',item:${id}},'穿上')">穿上</button>`+(it.bound?'':`<button onclick="act({action:'stash',item:${id}},'放入仓库')">放入仓库</button>`);
  if(src=='tstash'){const tt=(STO||{}).tstash||{};h+=tt.can_take?`<button class=gold onclick="stAct({action:'unstash',item:${id},tribe:true},'取出到背包')">取出到背包</button>`:`<span class=dim>部落设为仅干部可取，你没有取出权限</span>`}
  if(src=='abox')h+=`<button class=gold onclick="claimBox(${id})">领取到背包（需在营地）</button>`;
- if(src=='bag'&&!it.bound&&(STO||{}).tag)h+=`<button onclick="stAct({action:'stash',item:${id},tribe:true},'存入部落装备库')">存入部落装备库</button>`;
+ if(src=='bag'&&!it.bound&&(STO||{}).tag){const ct=((STO||{}).tstash||{}).can_take;h+=ct===true?`<button onclick="stAct({action:'stash',item:${id},tribe:true},'存入部落装备库')">存入部落装备库</button>`:`<button disabled style="opacity:.4;cursor:not-allowed" title="${ct===false?'你没有部落装备库取出权限，存入后取不回来':'正在读取部落权限'}">存入部落装备库${ct===false?'（无取出权限）':''}</button>`}
  if(src=='stash')h+=`<button class=gold onclick="equipFromStash(${id})">穿上</button><button onclick="act({action:'unstash',item:${id}},'取回背包')">取回背包</button>`;
  if(src=='bag'&&it.bound)h+=`</div><div class=dim style="margin-top:6px">新手绑定装备：不能出售、分解或放仓库，只能穿或丢弃。</div><div class=row><button class=red onclick="discardItem(${id},'${(it.name_zh||it.name).replace(/'/g,'')}')">丢弃</button>`;
  else if(src=='bag')h+=`</div><div class=row>出售价 <input id=sp type=number min=1 step=1 placeholder=金币> <button onclick="sellItem(${id})">挂单出售</button>
@@ -1040,13 +1080,14 @@ let MKC={},MKSEQ=0;function openMk(){$('mk').style.display='flex';loadMk()}
 async function loadMk(more){const q=new URLSearchParams({acct:ACCT,type:MX.type=='gear'?'gear':'goods',sort:MX.type=='gear'?MX.sort:'price'});if(MX.type=='goods'&&MX.goods)q.set('goods',MX.goods);if(MX.type=='gear'){if(MX.slot)q.set('slot',MX.slot);if(MX.rarity)q.set('rarity',MX.rarity)}
  if(more&&MX.cur!=null)q.set('cursor',MX.cur);const key=q.toString(),seq=++MKSEQ;
  if(!more){const c=MKC[key];if(c){MX.data=c;MX.cur=c.next_cursor;renderMk()}else if(!$('mkc').innerHTML.trim())$('mkc').innerHTML='<div class=dim>加载中…</div>'}
- $('mkc').classList.add('busy');let d;try{d=await j('/api/mkt?'+key)}catch(e){d=null}if(seq!=MKSEQ)return;$('mkc').classList.remove('busy');if(!d)return toast('交易所数据读取失败');
+ $('mkc').classList.add('busy');let d;try{d=await j('/api/mkt?'+key)}catch(e){d=null}if(seq!=MKSEQ)return;$('mkc').classList.remove('busy');if(!d||d.error){toast((d&&d.error)||'交易所数据读取失败，请再点一次',5000);if(MX.goods&&!more)MX.goods=null;if(!MX.data||MX.data.error)return;return renderMk()}if(d.stale)toast('游戏服务器忙，先显示 '+d.cached+' 秒前的数据',3000);
  if(more&&MX.data){MX.data.listings=MX.data.listings.concat(d.listings||[])}else{MX.data=d;MKC[key]=d}MX.cur=d.next_cursor;renderMk()}
 function mkSlot(k){MX.slot=k;MX.cur=null;loadMk()}function mkRar(k){MX.rarity=k;MX.cur=null;loadMk()}function mkSort(k){MX.sort=k;MX.cur=null;loadMk()}
 function mkBidTbl(B,all){B=B.slice().sort((a,b)=>all?(a.goods<b.goods?-1:a.goods>b.goods?1:b.each-a.each):b.each-a.each);
  return `<h4>求购单${all?'（全部物品）':''}</h4>`+(B.length?`<div class=tbl style="grid-template-columns:${all?'minmax(0,1.3fr) ':''}minmax(0,1.2fr) repeat(3,minmax(0,1fr))">${all?'<b>物品</b>':''}<b>买家</b><b>出价/个</b><b>还要</b><b>到期</b>`+
  B.map(x=>`${all?`<span>${mzn(x.goods)}</span>`:''}<span>${x.buyer}${x.buyer==ACCT?' <span class=dim>(我)</span>':''}</span><span style="color:#7ad0a0">${x.each}</span><span>${x.qty}</span><span class=dim style="font-size:12px">${tShort(x.expires_at)}</span>`).join('')+'</div>':'<div class=dim>暂无求购</div>')}
 function tShort(t){if(/^\d{4}-\d\d-\d\dT/.test(String(t||''))){const d=new Date(new Date(t).getTime()+8*3600e3);if(!isNaN(d))return `${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`}const m=String(t||'').match(/(\d{4})-(\d\d)-(\d\d)\s+(\d{1,2}):(\d\d)\s*([AP]M)?/);if(!m)return t||'';let h=+m[4];if(m[6]=='PM'&&h<12)h+=12;if(m[6]=='AM'&&h==12)h=0;return `${m[2]}-${m[3]} ${String(h).padStart(2,'0')}:${m[5]}`}
+function mkView(g){MX.goods=g;MX.cur=null;const c=MKC[new URLSearchParams({acct:ACCT,type:'goods',sort:'price',goods:g}).toString()];if(!c){$('mkc').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">🏪 营地交易所</h3><button onclick="$('mk').style.display='none'">关闭 ✕</button></div><div class=row style="gap:8px;align-items:center;margin:12px 0"><button onclick="MX.goods=null;loadMk()">‹ 返回</button><b>${mzn(g)}</b></div><div class=dim style="padding:24px 0;text-align:center">⏳ 正在读取 ${mzn(g)} 的卖单…</div>`}loadMk()}
 function mkTab(t){MX.type=t;MX.goods=null;MX.cur=null;loadMk()}
 function renderMk(){const d=MX.data||{};if(d.error){$('mkc').innerHTML='<div>'+d.error+'</div>';return}
  let h=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:nowrap"><div style="min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px"><h3 style="margin:0">🏪 营地交易所</h3><span style="font-size:13px">主角金币 <b style="color:#f0c35a">${d.coins??'-'}</b> · ${d.in_camp?'<span class=up>在营地</span>':'<span class=down>不在营地，不能购买</span>'}</span></div><button style="flex:none;margin-left:auto" onclick="$('mk').style.display='none'">关闭 ✕</button></div>
@@ -1057,7 +1098,7 @@ function renderMk(){const d=MX.data||{};if(d.error){$('mkc').innerHTML='<div>'+d
    const inG=MX.group=='all'?null:new Set(gr[MX.group]||[]);const bids=((d.summary&&d.summary.bids)||[]).reduce((a,b)=>(a[b.goods]=b,a),{});
    const rows=sm.filter(x=>!inG||inG.has(x.goods));
    h+=`<div class=tbl style="grid-template-columns:minmax(0,1.4fr) repeat(4,minmax(0,1fr)) auto"><b>物品</b><b>最低卖价</b><b>在售数量</b><b>卖单数</b><b>求购最高</b><span></span>`+
-    rows.map(x=>`<span>${mzn(x.goods)}</span><span style="color:#f0c35a">${x.low}</span><span>${x.qty}</span><span>${x.listings}</span><span>${bids[x.goods]?'<span style="color:#7ad0a0">'+bids[x.goods].high+'</span> <span class=dim>×'+bids[x.goods].qty+'</span>':'<span class=dim>-</span>'}</span><button onclick="MX.goods='${x.goods}';loadMk()">查看</button>`).join('')+`</div>`+(rows.length?'':'<div class=dim>这个分类暂时没人挂卖</div>');
+    rows.map(x=>`<span>${mzn(x.goods)}</span><span style="color:#f0c35a">${x.low}</span><span>${x.qty}</span><span>${x.listings}</span><span>${bids[x.goods]?'<span style="color:#7ad0a0">'+bids[x.goods].high+'</span> <span class=dim>×'+bids[x.goods].qty+'</span>':'<span class=dim>-</span>'}</span><button onclick="mkView('${x.goods}')">查看</button>`).join('')+`</div>`+(rows.length?'':'<div class=dim>这个分类暂时没人挂卖</div>');
   }else{const L=(d.listings||[]).slice().sort((a,b)=>a.price_each-b.price_each);const low=L[0]?L[0].price_each:0;
    h+=`<div class=row style="gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px"><button onclick="MX.goods=null;loadMk()">‹ 返回</button><b>${mzn(MX.goods)}</b><span class=dim>共 ${L.reduce((a,b)=>a+b.qty,0)} 个在售</span></div>
    <div class=row style="gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px;padding:8px;border:1px solid var(--line);border-radius:8px">批量买入（从最便宜的买起）数量 <input id=mkbq type=number min=1 value=10 style="width:80px"> 单价不超过 <input id=mkbm type=number step=0.01 min=0 value=${low} style="width:80px"><button ${d.in_camp?'':'disabled'} onclick="mkBulk()">买入</button></div>
@@ -1079,7 +1120,7 @@ function mkBuy(i){const L=(MX.data.listings||[]).slice().sort((a,b)=>a.price_eac
 function mkBulk(){const q=Math.floor(+$('mkbq').value||0),m=+$('mkbm').value;if(q<1||!(m>0))return toast('数量或单价不对');
  mkPost({action:'buy',goods:MX.goods,qty:q,max_each:m},`买入 ${mzn(MX.goods)} ${q} 个，从最便宜的买起，单价不超过 ${m}，最多约 ${Math.ceil(q*m)} 币？`)}
 function mkDetail(x){const it=x.item;const c=RC[it.rarity]||'#888';const af=(it.affixes||[]).map(a=>`<div>${a.zh||a.name_zh||a.text_zh||a.name||a.id} ${a.value!=null?a.value:''}</div>`).join('');
- openDlg(`<h3 style="margin:0;color:${c}">${it.name_zh||it.name}</h3><div class=dim>${SN[it.slot]||it.slot} · L${it.level} · ${RN[it.rarity]||it.rarity}${it.unidentified?' · 未鉴定':''}</div>${it.damage!=null?'<div>伤害 '+it.damage+'</div>':''}${it.armor!=null?'<div>护甲 '+it.armor+'</div>':''}${it.implicit?'<div>固有：'+(it.implicit.name_zh||it.implicit.name||it.implicit.id)+' '+(it.implicit.value??'')+'</div>':''}${af}<div>耐久 ${it.durability}/${it.durability_max}</div><div style="margin-top:6px">售价 <b style="color:#f0c35a">${x.price}</b> 币 · 卖家 ${x.seller}</div><div class=row><button ${MX.data.in_camp?'':'disabled'} onclick="closeDlg();mkBuyGear(${MX.data.listings.indexOf(x)})">买</button><button onclick="closeDlg()">关闭</button></div>`)}
+ openDlg(`<h3 style="margin:0;color:${c}">${it.name_zh||it.name}</h3><div class=dim>${SN[it.slot]||it.slot} · L${it.level} · ${RN[it.rarity]||it.rarity}${it.unidentified?' · 未鉴定':''}</div>${it.damage!=null?'<div>伤害 '+it.damage+'</div>':''}${it.armor!=null?'<div>护甲 '+it.armor+'</div>':''}${it.implicit?'<div>固有：'+(it.implicit.name_zh||it.implicit.name||it.implicit.id)+' '+(it.implicit.value??'')+'</div>':''}${(it.grants||[]).map(aff).join('')}${af}${it.as_weapon_zh?'<div class=dim>'+it.as_weapon_zh+'</div>':''}${fxHtml(it)}<div>耐久 ${it.durability}/${it.durability_max}</div><div style="margin-top:6px">售价 <b style="color:#f0c35a">${x.price}</b> 币 · 卖家 ${x.seller}</div><div class=row><button ${MX.data.in_camp?'':'disabled'} onclick="closeDlg();mkBuyGear(${MX.data.listings.indexOf(x)})">买</button><button onclick="closeDlg()">关闭</button></div>`)}
 function mkBuyGear(i){const x=MX.data.listings[i];mkPost({action:'buy',listing:x.id},`花 ${x.price} 币买「${x.item.name_zh||x.item.name}」（${x.seller}）？`)}
 function openDlg(h){$('dlgc').innerHTML=h;$('dlg').style.display='flex'}function closeDlg(){$('dlg').style.display='none'}
 // 2026-11-18 深渊配装卡片：GET /api/abyss_team（代理 /world/abyss/team），只在展开时读取
