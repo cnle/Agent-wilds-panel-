@@ -44,7 +44,29 @@ def hcaptcha_ok(token, ip):
     except Exception:
         return False
 SECRET = hashlib.sha256((PASSWORD + "|aw").encode()).digest()
-ALLOWED = {"sell", "unlist", "equip", "unequip", "stash", "unstash", "salvage", "identify", "discard", "deposit", "withdraw", "abyss", "talent", "requisition", "buy"}
+
+# 2026-11-20 一键穿戴方案云端存储：Wasmer 持久卷 /data（无卷时退回本地文件）
+GS_DIR = "/data" if os.path.isdir("/data") else HERE
+GS_PATH = os.path.join(GS_DIR, "gsets.json"); GS_LOCK = threading.Lock()
+def gs_load():
+    try: return json.load(open(GS_PATH, encoding="utf-8"))
+    except Exception: return {}
+def gs_save(acct, unit, plan):
+    with GS_LOCK:
+        d = gs_load(); a = d.setdefault(acct, {})
+        if plan: a[unit] = plan
+        else: a.pop(unit, None)
+        tmp = GS_PATH + ".tmp%d" % os.getpid(); json.dump(d, open(tmp, "w", encoding="utf-8"), ensure_ascii=False); os.replace(tmp, GS_PATH)
+def gs_clean(plan):
+    out = {}
+    if not isinstance(plan, dict): return out
+    for n, p in plan.items():
+        if str(n) not in ("2", "3", "4", "5") or not isinstance(p, dict): continue
+        q = {str(k)[:20]: int(v) for k, v in p.items() if isinstance(v, int) and re.fullmatch(r"[\w-]{1,20}", str(k))}
+        if q: out[str(n)] = q
+    return out
+ALLOWED = {"sell", "unlist", "equip", "unequip", "stash", "unstash", "salvage", "identify", "discard", "deposit", "withdraw", "abyss", "talent", "requisition", "buy", "eat", "feed", "repair", "bounty", "deliver", "bank"}
+FOODS = {"carrot": 15, "carrots": 15, "corn": 20, "roast": 25, "pumpkin": 30, "pumpkins": 30, "bread": 40, "corn_cake": 45, "corncake": 45, "stew": 60, "pie": 70}  # 生肉不能直接吃（需烤成 roast）  # 2026-11-20 喂食
 
 def api(acct, method, path, body=None):
     data = json.dumps(body).encode() if body is not None else None
@@ -311,6 +333,17 @@ class H(BaseHTTPRequestHandler):
             c4, ab = api(acct, "GET", "/world/abyss")
             o["abox"] = ((ab.get("you") or {}).get("box") or []) if c4 == 200 else []
             return self.send(200, o)
+        if u.path == "/api/gsets":
+            return self.send(200, {"sets": gs_load().get(acct, {}), "cloud": GS_DIR == "/data"})
+        if u.path == "/api/abyss_kit_ids":  # 2026-11-20 深渊预设装备标记（只读）：item id -> 用它的英雄
+            c, d = api(acct, "GET", "/world/abyss/team")
+            if c != 200: return self.send(c or 502, d)
+            t = d.get("team") or {}; ids = {}
+            for h in (t.get("heroes") or []) + (t.get("others") or []):
+                if not isinstance(h, dict) or not h.get("kit"): continue
+                for g in (h.get("gear") or {}).values():
+                    if isinstance(g, dict) and isinstance(g.get("id"), int): ids.setdefault(str(g["id"]), []).append(h.get("id"))
+            return self.send(200, {"ids": ids})
         if u.path == "/api/abyss_team":  # 2026-11-18 深渊配装卡片（只读，懒加载）
             c, d = api(acct, "GET", "/world/abyss/team")
             if c != 200: return self.send(c or 502, d)
@@ -387,6 +420,14 @@ class H(BaseHTTPRequestHandler):
                 return self.send(302, "", extra={"Location": "/", "Set-Cookie": "awp=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000%s" % (tok, "; Secure" if (self.headers.get("X-Forwarded-Proto") == "https" or "https" in (self.headers.get("CF-Visitor") or "")) else "")})
             time.sleep(1); return self.send(200, LOGIN, "text/html; charset=utf-8")
         if not token_ok(self): return self.send(401, {"error": "login"})
+        if u.path == "/api/gsets":
+            try: j = json.loads(raw)
+            except Exception: return self.send(400, {"error": "bad json"})
+            acct, unit = j.get("acct"), str(j.get("unit") or "main")
+            if acct not in ACCTS or not re.fullmatch(r"main|\d{1,8}", unit): return self.send(400, {"error": "bad acct/unit"})
+            try: gs_save(acct, unit, gs_clean(j.get("plan")))
+            except Exception as e: return self.send(500, {"error": "save failed: %s" % e})
+            return self.send(200, {"ok": True})
         if u.path in ("/api/fx/order", "/api/fx/cancel"):
             try: j = json.loads(raw)
             except Exception: return self.send(400, {"error": "bad json"})
@@ -406,7 +447,18 @@ class H(BaseHTTPRequestHandler):
             acct, body = j.get("acct"), j.get("body") or {}
             if acct not in ACCTS or body.get("action") not in ALLOWED:
                 return self.send(400, {"error": "不允许的操作"})
-            body = {k: v for k, v in body.items() if k in ("action", "item", "goods", "qty", "price", "per", "listing", "slot", "unit", "items", "store", "tribe", "do", "box", "talent", "points", "node", "pick", "hero", "listing", "max_each")}
+            body = {k: v for k, v in body.items() if k in ("action", "item", "goods", "qty", "price", "per", "listing", "slot", "unit", "items", "store", "tribe", "do", "box", "talent", "points", "node", "pick", "hero", "listing", "max_each", "pet", "meat", "order", "mode")}
+            if body.get("action") == "repair" and (not isinstance(body.get("item"), int) or body.get("with") not in (None, "materials")): return self.send(400, {"error": "修理参数不对"})
+            if body.get("action") == "bounty": body = {"action": "bounty", **({"unit": body["unit"]} if "unit" in body else {})}  # 2026-11-20 悬赏一键领取
+            if body.get("action") == "deliver":  # 2026-11-20 订单提交：选订单+数量
+                o_, q_ = body.get("order"), body.get("qty")
+                if not (isinstance(o_, int) and not isinstance(o_, bool) and 1 <= o_ <= 20) or (q_ is not None and not (isinstance(q_, int) and not isinstance(q_, bool) and q_ >= 1)): return self.send(400, {"error": "订单参数不对"})
+                body = {"action": "deliver", "order": o_, **({"qty": q_} if q_ is not None else {})}
+            if body.get("action") == "bank":  # 2026-11-20 宝箱入库：只允许 pay（交 1/5 贡品），不允许 run 赌
+                if body.get("mode") != "pay": return self.send(400, {"error": "只允许普通入库"})
+                body = {"action": "bank", "mode": "pay"}
+            if body.get("action") == "eat" and body.get("item") not in FOODS: return self.send(400, {"error": "不是食物"})
+            if body.get("action") == "feed" and (body.get("pet") not in ("falcon", "lion", "luna") or not isinstance(body.get("meat"), int) or not 0 < body["meat"] <= 40 or "unit" in body): return self.send(400, {"error": "宠物喂食参数不对"})
             if body.get("action") in ("deposit", "withdraw"):
                 it = body.get("items")
                 if not (isinstance(it, dict) and it and all(isinstance(v, int) and v > 0 for v in it.values())) or "coins" in body: return self.send(400, {"error": "材料数量不对"})
@@ -533,7 +585,8 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;pad
 .bar span{position:absolute;inset:0;font-size:11px;text-align:center;line-height:16px;text-shadow:0 1px 2px #000}
 .stats{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px}.stats b{font-size:22px;display:block;color:#fff}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:7px}
-.it{border:1px solid var(--line);border-left:4px solid #888;border-radius:8px;padding:7px 9px;cursor:pointer;background:rgba(10,9,8,.45)}
+.it{border:1px solid var(--line);border-left:4px solid #888;border-radius:8px;padding:7px 9px;cursor:pointer;background:rgba(10,9,8,.45)}.it.akit{outline:1px solid rgba(255,120,60,.7);background:rgba(255,110,50,.09)}.gsb{display:inline-block;font-size:11px;color:#8fd3ff;border:1px solid rgba(110,190,255,.6);border-radius:6px;padding:0 5px;margin-left:4px}.it.gsit{box-shadow:inset 0 0 0 1px rgba(110,190,255,.45)}.fdl{display:inline-block;cursor:pointer;color:#f0c35a;border:1px solid rgba(240,195,90,.55);border-radius:6px;padding:0 6px;background:rgba(240,195,90,.1)}.fdl:active{background:rgba(240,195,90,.3)}.fdb{display:block;margin-top:4px;font-size:12px;padding:2px 8px;line-height:1.4}
+.gsr{display:flex;align-items:center;gap:6px;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0;background:rgba(10,9,8,.4)}.gsr .t{flex:1;min-width:160px}.gsp button.on{background:rgba(110,190,255,.25);border-color:rgba(110,190,255,.8);color:#cfeaff}.akb{display:inline-block;font-size:11px;color:#ffb27a;border:1px solid rgba(255,140,80,.6);border-radius:6px;padding:0 5px;margin-left:4px}
 .it:hover{background:rgba(60,50,35,.6)}.it .n{font-weight:600}.it .s{color:var(--dim);font-size:12px}.broken{opacity:.55}
 .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
 table{width:100%;border-collapse:collapse;font-size:13px;min-width:560px}td,th{padding:6px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{color:var(--dim);font-weight:normal}
@@ -568,7 +621,7 @@ input{background:rgba(0,0,0,.4);color:var(--txt);border:1px solid rgba(240,195,9
 @media(max-width:900px){main{grid-template-columns:minmax(0,1fr);padding:10px;gap:10px}}
 @media(max-width:600px){
  body{background-attachment:scroll;font-size:15px}
- header{padding:8px 10px}header h1{font-size:15px;width:100%}#upd{width:100%;font-size:12px}
+ header{padding:8px 10px}header h1{font-size:15px;width:auto;flex:1 1 auto;min-width:0;margin-right:0}header h1 img{width:30px!important;height:30px!important}#dn{font-size:11px!important;padding:2px 7px!important}#tabs{width:100%}#upd{width:100%;font-size:12px}
  .card{padding:12px;border-radius:12px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}
  .stats{gap:14px}.stats b{font-size:19px}
  #dlg{align-items:flex-end}#dlg>div{width:100vw;border-radius:16px 16px 0 0;max-height:85vh;padding:18px 16px 26px}
@@ -578,7 +631,7 @@ input{background:rgba(0,0,0,.4);color:var(--txt);border:1px solid rgba(240,195,9
 <header><h1 style="display:flex;align-items:center;gap:8px"><img src="data:image/png;base64,__L128__" alt="" style="width:38px;height:38px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))">Agent Wilds 面板</h1><span id=dn title="荒野一天=现实2小时，夜晚 19:30–05:00（UTC+8 对齐）；夜晚魔王伤害/防御加成" style="font-size:13px;padding:3px 9px;border:1px solid var(--line);border-radius:12px;white-space:nowrap"></span><span id=tabs></span><button onclick="load()">刷新</button><span id=upd class=dim></span><div id=utabs></div></header>
 <main>
  <div class=card><h2>英雄 <span id=loc class=dim></span></h2><div id=hero></div></div>
- <div class=card><h2>穿戴装备 <span class=dim>点击可卸下</span></h2><div id=worn class=grid></div></div>
+ <div class=card><h2 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">穿戴装备 <span class=dim>点击可卸下</span><button class=gold style="margin-left:auto;font-size:13px;padding:3px 12px" onclick="gsOpen()">⚡ 一键穿戴</button></h2><div id=worn class=grid></div></div>
  <div class=card><h2>装备背包 <span id=gbc class=dim></span></h2><div id=gbag class=grid></div></div>
  <div class=card><h2>仓库 <span id=stc class=dim></span></h2><div id=stabs class=stabs></div><div id=stash class=grid></div><div id=stash2></div></div>
  <div class="card full"><h2>物品与材料 <span class=dim>点击可出售</span></h2><div id=goods class=bag></div></div>
@@ -612,13 +665,47 @@ async function init(){const a=await j('/api/accts');$('tabs').innerHTML=a.accts.
 function pick(a){ACCT=a;UNIT=null;ABK=null;if($('abp')&&$('abp').style.display=='flex')setTimeout(loadAbp,0);if(typeof ABKOPEN!="undefined"&&ABKOPEN)setTimeout(loadAbk,0);document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.id=='t_'+a));load();loadUnits()}
 function pickUnit(u){UNIT=u;document.querySelectorAll('.ut').forEach(e=>e.classList.toggle('on',e.dataset.u==String(u||'')));load()}
 const SQ=()=>'/api/state?acct='+ACCT+(UNIT?'&unit='+UNIT:'');
-async function load(){$('upd').textContent='加载中…';const [s,m,st]=await Promise.all([j(SQ()),j('/api/market?acct='+ACCT),j('/api/stores?acct='+ACCT)]);ST=s;MK=m;STO=st;
+async function load(){$('upd').textContent='加载中…';const [s,m,st]=await Promise.all([j(SQ()),j('/api/market?acct='+ACCT),j('/api/stores?acct='+ACCT)]);ST=s;MK=m;STO=st;if(!UNIT)setTimeout(loadAk,0);setTimeout(gsLoad,0);
  CUR={};(s.currencies||[]).forEach(c=>CUR[c.currency]=c.name_zh);render();$('upd').textContent='更新于 '+new Date().toLocaleTimeString()}
-async function refreshState(){ST=await j(SQ());render()}
+async function refreshState(){ST=await j(SQ());render();if(!UNIT)loadAk();gsLoad()}
 function stat(it){let a=[];if(it.damage)a.push('伤害 '+it.damage);if(it.armor)a.push('护甲 '+it.armor);if(it.range)a.push('射程 '+it.range);return a.join(' · ')}
+// 2026-11-20 深渊预设装备标记：/api/abyss_kit_ids，按账号缓存
+let AKIDS={},AKT={};function akOf(id){const m=(AKIDS[ACCT]||{})[id];return m&&m.length?m.map(h=>'#'+h).join(' '):''}
+async function loadAk(force){const a=ACCT;if(!force&&AKT[a]&&Date.now()-AKT[a]<60000)return;AKT[a]=Date.now();let d;try{d=await j('/api/abyss_kit_ids?acct='+encodeURIComponent(a))}catch(e){d=null}if(d&&d.ids){const ch=JSON.stringify(d.ids)!=JSON.stringify(AKIDS[a]||{});AKIDS[a]=d.ids;if(ch&&a==ACCT&&ST&&!ST.error)render()}}
+function akWarn(id){const ak=akOf(id);return ak?`\n\n⚠️ 这件装备已用在深渊预设（英雄 ${ak}），处理后深渊配装会缺这件！`:''}
+// 2026-11-20 一键穿戴：方案1 自动（背包里 vs_worn 战力提升最高），方案2–5 自定义（存云端 /data/gsets.json（Wasmer 卷），本机 localStorage 做备份，按账号+英雄）
+function gsKey(){return ACCT+'|'+(UNIT||'main')}
+function gsAll(){try{return JSON.parse(localStorage.gsets||'{}')}catch(e){return {}}}
+let GSC={},GSL={};async function gsLoad(force){const a=ACCT;if(!force&&GSL[a])return;GSL[a]=1;let d;try{d=await j('/api/gsets?acct='+encodeURIComponent(a))}catch(e){GSL[a]=0;return}if(!d||!d.sets){GSL[a]=0;return}const loc=gsAll(),mig=[];for(const k in loc){if(!k.startsWith(a+'|'))continue;const u=k.slice(a.length+1);if(!d.sets[u]&&Object.keys(loc[k]||{}).length){d.sets[u]=loc[k];mig.push(u)}}GSC[a]=d.sets;for(const u of mig)gsSync(a,u,d.sets[u]);if(a==ACCT&&ST&&!ST.error)render()}
+function gsSync(a,u,v){fetch('/api/gsets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acct:a,unit:u,plan:v})}).then(r=>r.json()).then(d=>{if(!d.ok)toast('方案云端保存失败：'+(d.error||''),5000)}).catch(e=>toast('方案云端保存失败（已存本机）',5000))}
+function gsGet(){const c=GSC[ACCT];if(c)return c[UNIT||'main']||{};return gsAll()[gsKey()]||{}}
+function gsPut(v){const a=gsAll();a[gsKey()]=v;localStorage.gsets=JSON.stringify(a);const u=UNIT||'main';(GSC[ACCT]=GSC[ACCT]||{})[u]=v;gsSync(ACCT,u,v)}
+function gsOf(id){const g=gsGet(),r=[];for(const n of [2,3,4,5]){const p=g[n]||{};if(Object.values(p).includes(id))r.push(n)}return r}
+function gsBtns(id,slot){const on=gsOf(id);return `<div class="row gsp" style="margin-top:8px;align-items:center"><span class=dim>设为方案：</span>${[2,3,4,5].map(n=>`<button class="${on.includes(n)?'on':''}" onclick="gsSet(${n},${id},'${slot}')">${on.includes(n)?'✓ ':''}方案${n}</button>`).join('')}</div><div class=dim style="font-size:12px">每个方案每个部位只放一件；再点一次取消。</div>`}
+function gsSet(n,id,slot){const g=gsGet();const p=g[n]=g[n]||{};if(p[slot]==id){delete p[slot];toast('已从方案'+n+'移除')}else{const old=p[slot];p[slot]=id;toast('已设为方案'+n+'的'+(SN[slot]||slot)+(old?'（替换原来那件）':''))}gsPut(g);const src=['worn','bag','stash'].find(s=>find(s,id));render();if(src)detail(src,id)}
+function gsFind(id){for(const s of ['worn','bag','stash']){const it=find(s,id);if(it)return [s,it]}return [null,null]}
+function gsAuto(){const s=ST||{},best={};for(const it of (s.gear_bag||[])){const v=it.vs_worn;if(!v||v.power==null||!(v.power>0)||it.broken||it.unidentified||v.needs_level||v.broken)continue;const k=v.slot||it.slot;if(!best[k]||v.power>best[k].vs_worn.power)best[k]=it}return best}
+function gsOpen(){const s=ST||{};if(!s||s.error)return;const g=gsGet(),au=gsAuto(),ak=Object.keys(au);
+ let h=`<h3 style="margin:0">⚡ 一键穿戴 · ${UNIT?'英雄 '+UNIT:'主角'}</h3><div class=dim style="margin-top:4px">每个部位 5 分钟只能换一次，冷却中的部位会跳过。</div>`;
+ h+=`<div class=gsr><div class=t><b>方案1 · 自动最优</b><div class=dim style="font-size:12px">${ak.length?ak.map(k=>`${SN[k]||k} ${au[k].name_zh||au[k].name} <span class=up>+${au[k].vs_worn.power}</span>`).join('，'):'背包里没有比身上更好的装备'}</div><div class=dim style="font-size:11px">按游戏给的战力提升（背包装备）；仓库装备游戏不给战力对比，要用请放进方案2–5</div></div><button class=gold ${ak.length?'':'disabled'} onclick="gsApply(1)">穿上</button></div>`;
+ for(const n of [2,3,4,5]){const p=g[n]||{},ks=Object.keys(p);const desc=ks.map(k=>{const [w,it]=gsFind(p[k]);return `${SN[k]||k} ${it?(it.name_zh||it.name):'<span class=down>找不到#'+p[k]+'</span>'}${w=='worn'?' <span class=dim>(已穿)</span>':w=='stash'?' <span class=dim>(仓库)</span>':''}`}).join('，');
+  h+=`<div class=gsr><div class=t><b>方案${n}</b> <span class=dim>${ks.length} 件</span><div class=dim style="font-size:12px">${desc||'空：在装备详情里点「方案'+n+'」加入，或把当前穿戴存进来'}</div></div><button class=gold ${ks.length?'':'disabled'} onclick="gsApply(${n})">穿上</button><button onclick="gsSave(${n})">存当前穿戴</button>${ks.length?`<button class=red onclick="gsClear(${n})">清空</button>`:''}</div>`}
+ h+=`<div class=row><button onclick="closeDlg()">关闭</button></div>`;openDlg(h)}
+async function gsSave(n){const w=Object.entries((ST||{}).worn||{}).filter(([k,v])=>v&&v.id);if(!w.length)return toast('身上没穿装备');const g=gsGet();if(Object.keys(g[n]||{}).length&&!await ask('覆盖方案'+n+'？'))return;g[n]={};w.forEach(([k,v])=>g[n][k]=v.id);gsPut(g);toast('已把当前 '+w.length+' 件存为方案'+n);render();gsOpen()}
+async function gsClear(n){if(!await ask('清空方案'+n+'？（只清方案记录，不动装备）'))return;const g=gsGet();delete g[n];gsPut(g);render();gsOpen()}
+async function gsApply(n){let plan={};if(n==1){const au=gsAuto();for(const k in au)plan[k]=au[k].id}else plan=Object.assign({},gsGet()[n]||{});
+ const todo=[];for(const k in plan){const [w,it]=gsFind(plan[k]);if(w=='worn')continue;todo.push([k,plan[k],w,it])}
+ if(!todo.length)return toast(n==1?'没有可提升的装备':'方案'+n+'的装备都已穿上',4000);
+ if(!await ask(`穿上方案${n}：\n`+todo.map(([k,id,w,it])=>`${SN[k]||k}：${it?(it.name_zh||it.name):'#'+id+'（找不到）'}${w=='stash'?'（从仓库取出）':''}`).join('\n')+`\n\n换下的装备会回到背包。`))return;
+ closeDlg();const ok=[],bad=[];const p0=(ST||{}).power;
+ for(const [k,id,w,it] of todo){const nm=SN[k]||k;if(!w){bad.push(nm+' 找不到');continue}
+  if(w=='stash'){if(UNIT){bad.push(nm+' 在仓库（英雄不能取）');continue}const r=await post({action:'unstash',item:id});if(!(r.result&&r.result.success)){bad.push(nm+' 取出失败：'+errText(r));continue}}
+  const r=await post({action:'equip',item:id,slot:k});if(r.result&&r.result.success)ok.push(nm);else bad.push(nm+'：'+errText(r).slice(0,60))}
+ await refreshState();const p1=(ST||{}).power;
+ toast(`方案${n}：穿上 ${ok.length} 件${ok.length?'（'+ok.join('、')+'）':''}${p0!=null&&p1!=null?'，战力 '+p0+'→'+p1:''}${bad.length?'；未成功：'+bad.join('；'):''}`,bad.length?10000:6000)}
 function card(it,src){const c=RC[it.rarity]||'#888';const w=it.worth&&it.worth.power!=null?` · 战力 ${it.worth.power}`:'';
  const vs=it.vs_worn&&it.vs_worn.power!=null?` · <span class=${it.vs_worn.power>=0?'up':'down'}>${it.vs_worn.power>=0?'+':''}${it.vs_worn.power}</span>`:'';
- return `<div class="it ${it.broken?'broken':''}" style="border-left-color:${c}" onclick="detail('${src}',${it.id})"><div class=n style="color:${c}">${it.name_zh||it.name}</div>
+ const ak=akOf(it.id),gs=(src=='worn'||src=='bag'||src=='stash')?gsOf(it.id):[];return `<div class="it ${it.broken?'broken':''} ${ak?'akit':''} ${gs.length?'gsit':''}" style="border-left-color:${c}" onclick="detail('${src}',${it.id})"><div class=n style="color:${c}">${it.name_zh||it.name}${ak?`<span class=akb title="已用在深渊预设">🔥深渊 ${ak}</span>`:''}${gs.length?`<span class=gsb title="已设为穿戴方案">方案${gs.join('·')}</span>`:''}</div>
  <div class=s>${SN[it.slot]||it.slot} · L${it.level} · ${RN[it.rarity]||it.rarity}${w}${vs}</div><div class=s>耐久 ${it.durability}/${it.durability_max}${it.broken?' 已损坏':''}${it.unidentified?' · 未鉴定':''}${it.bound?' · 绑定':''}</div></div>`}
 let UNITS=null,UST=null,UNIT=null;
 const GRD={starlit:'星辉',gold:'金',silver:'银',iron:'铁'},ROL={farmer:'农夫',miner:'矿工',hunter:'猎人',woodcutter:'樵夫',builder:'工匠'};
@@ -646,6 +733,7 @@ function renderPz(s){const el=$('pzc');if(!el||!s)return;if(s.chest||s.pool)PZC[
  h+=`<div class=tr><b style="font-weight:normal;color:#d9cdb5">未入库宝箱</b><span class=dim>${empty?'空':cu!=null?'≈ $'+cu.toFixed(2):''}</span></div>`+(empty?'':row(c.chest));
  if(!empty&&c.since)h+=`<div class=dim style="font-size:11px">开始于 ${tShort(c.since)}${c.run?' · 可跑 '+tShort(c.run):''}</div>`;
  h+=`<div class=sub><div class=tr><b style="font-weight:normal;color:#d9cdb5">入库未提取</b><span class=dim>${pu!=null?'≈ $'+pu.toFixed(2):''}</span></div>${row(c.pool)}</div>`;
+ if(!empty&&c.chest&&!UNIT)h+=`<button class="gold fdb" style="width:100%" onclick="pzBank()">📥 一键入库（留 4/5）</button>`;
  el.innerHTML=h;const hid=!!localStorage.pzHid;el.classList.toggle('hid',hid);$('pzt').style.display=hid?'block':'none';tkPos()}addEventListener('scroll',tkPos,{passive:true});addEventListener('resize',tkPos);
 setInterval(()=>{if(ST)renderTk(ST)},30000);
 function tkShow(v){localStorage.tkHid=v?'':'1';$('tkc').classList.toggle('hid',!v);$('tkt').style.display=v?'none':'block';tkPos()}
@@ -670,6 +758,7 @@ function renderTk(s){const el=$('tkc');if(!el||!s)return;const B=s.bounties||[],
  const bd=B.filter(b=>b.done>=b.n).length;
  let h=`<h5><span>📜 悬赏 ${bd}/${B.length} 完成</span><span class=x title="隐藏到左边" onclick="tkShow(0)">‹</span></h5>`;
  h+=B.map(b=>{const full=b.done>=b.n;const st=b.claimed?'<span class=ok>已领</span>':full?'<span class=pd>可领</span>':'';return `<div class=tr><span>${RINGZ[b.ring]||b.ring||''}·${KZ[b.kind]||b.kind}</span><span>${b.done}/${b.n} ${st}</span></div>`}).join('')||'<div class=dim>今日无悬赏</div>';
+ const bc=B.filter(b=>b.done>=b.n&&!b.claimed).length;if(bc)h+=`<button class="gold fdb" style="width:100%" onclick="bdClaim(${bc})">🎁 一键领取悬赏（${bc} 个）</button>`;
  let et='',left='';{const ea=O[0]&&O[0].ends_at;let t=NaN;
  if(typeof ea=='number')t=ea<1e12?ea*1000:ea;else if(ea){const sx=String(ea);const dm=sx.match(/\d{4}-\d{2}-\d{2}/);const tm=sx.match(/(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/);
   if(dm&&tm&&!/T\d/.test(sx)){let hh=+tm[1];if(tm[3]){hh=hh%12+(/p/i.test(tm[3])?12:0)}t=Date.parse(dm[0]+'T'+String(hh).padStart(2,'0')+':'+tm[2]+':00+08:00')}else t=Date.parse(sx)}
@@ -678,13 +767,14 @@ function renderTk(s){const el=$('tkc');if(!el||!s)return;const B=s.bounties||[],
  h+=`<h5 style="margin-top:8px"><span>📦 营地订单</span></h5>`+(et&&O.length?`<div style="margin:-2px 0 4px;color:#9fd3ff">🔄 下次刷新 ${et}（还剩 ${left}）· 每 2 小时一轮</div>`:'');
  h+=O.map(o=>{const nm=GN[o.goods]||o.goods;const mine=o.share-(o.yours_left??o.share);const st=o.done?'<span class=ok>已满</span>':o.closed?'<span class=dim>本轮已交别单</span>':(o.yours_left===0?'<span class=ok>我已交满</span>':`我 ${mine}/${o.share}`);
   return `<div class=tr><span>${nm} 全服 ${o.qty-o.left}/${o.qty}</span><span>${st}</span></div><div class=dim style="font-size:11px;margin:-2px 0 3px">交满奖励 ${o.xp} 经验 · ${o.coins} 金币</div>`}).join('')||'<div class=dim>无订单（需在玩英雄）</div>';
+ if(O.length&&!UNIT){const used=O.some(o=>o.closed);h+=used?'<div class=dim style="font-size:11px">本轮已提交过一次，下轮再交</div>':`<button class="gold fdb" style="width:100%" onclick="odOpen()">📦 提交订单</button>`}
  h+=clHtml(s);
  el.innerHTML=h;tkPos();const hid=!!localStorage.tkHid;el.classList.toggle('hid',hid);$('tkt').style.display=hid?'block':'none'}
 function render(){const s=ST;renderTk(s);renderPz(s);if(!s||s.error){$('hero').textContent=JSON.stringify(s);return}
  const hh=s.hero||{},hg=hh.grade||(hh.kind=='demon_lord'?'lord':''),hn=hh.kind=='demon_lord'?'魔王'+(hh.title&&hh.title.zh?'·'+hh.title.zh:''):(GRD[hh.grade]||'')+(ROL[hh.role]||'');if(!UNIT){const mt=document.querySelector('.ut[data-u=""]');if(mt){mt.className=mt.className.replace(/ ?g-\S+/g,'');if(hg)mt.classList.add('g-'+hg)}window.MAINHG=hg}
  $('loc').textContent=`${s.name||''} · L${s.level} · (${s.x},${s.y}) ${s.in_camp?'营地':s.ring}`;
  const sq=(s.hero&&s.hero.squad)||[];
- $('hero').innerHTML=`<div class=stats><div><span class=dim>个人战力</span><b>${s.power??(s.gear_score&&s.gear_score.power)??'-'}</b></div><div><span class=dim>队伍总战力</span><b>${s.squad_power??'-'}</b></div><div ${UNIT?'':'onclick="openFx()" style="cursor:pointer" title="点击进入金币交易所"'}><span class=dim>金币${UNIT?'':' <span style="color:#f0c35a">交易›</span>'}</span><b>${s.coins}</b></div><div><span class=dim>饱食</span><b>${s.food}</b>${petLine(s.pets)}</div><div><span class=dim>今日战功</span><b>${s.deeds_today??'-'}/${s.deeds_cap??4200}</b></div><div ${UNIT?'':'onclick="openQm()" style="cursor:pointer" title="点击用溢出战功兑换"'}><span class=dim>溢出战功${UNIT?'':' <span style="color:#f0c35a">兑换›</span>'}</span><b>${s.deeds_banked??'-'}</b></div>${runCell('深渊',s.abyss_left,s.abyss_max)}${runCell('迷雾',s.fog_left,s.fog_max)}</div>
+ $('hero').innerHTML=`<div class=stats><div><span class=dim>个人战力</span><b>${s.power??(s.gear_score&&s.gear_score.power)??'-'}</b></div><div><span class=dim>队伍总战力</span><b>${s.squad_power??'-'}</b></div><div ${UNIT?'':'onclick="openFx()" style="cursor:pointer" title="点击进入金币交易所"'}><span class=dim>金币${UNIT?'':' <span style="color:#f0c35a">交易›</span>'}</span><b>${s.coins}</b></div><div><span class=fdl onclick="event.stopPropagation();fdOpen()" title="点击喂食">饱食</span><b>${s.food}</b>${UNIT?'':petLine(s.pets)}</div><div><span class=dim>今日战功</span><b>${s.deeds_today??'-'}/${s.deeds_cap??4200}</b></div><div ${UNIT?'':'onclick="openQm()" style="cursor:pointer" title="点击用溢出战功兑换"'}><span class=dim>溢出战功${UNIT?'':' <span style="color:#f0c35a">兑换›</span>'}</span><b>${s.deeds_banked??'-'}</b></div>${runCell('深渊',s.abyss_left,s.abyss_max)}${runCell('迷雾',s.fog_left,s.fog_max)}</div>
  ${bar(s.hp,s.max_hp,'#d9534f','血量')}${bar(s.xp,s.xp_next,'#7b6cf0','经验（升下一级）')}${bar(s.ap,s.ap_max,'#3fb6d6','体力 AP')}
  <div class=dim>攻击 ${s.attack} · 防御 ${s.defense} · 暴击 ${s.crit}% · ${UNIT?'英雄 '+(hn||s.hero.kind||''):'主英雄 '+(hn||(s.hero.title&&s.hero.title.zh)||s.hero.kind||'')}${s.hero.path&&s.hero.path.zh?' · '+s.hero.path.zh:''}</div>
  <div class=dim style="margin-top:6px">队伍：${sq.map(h=>({starlit:'星辉',gold:'金',silver:'银',iron:'铁'}[h.grade]||h.grade||'')+({farmer:'农夫',miner:'矿工',hunter:'猎人',woodcutter:'樵夫',builder:'工匠'}[h.role]||h.role||h.kind)).join('、')||'无'}</div>${UNIT?'':'<div class=row style="margin-top:10px"><button class=gold onclick="abpOpen()">🔥 深渊预设</button><span class=dim style="font-size:12px">预设深渊英雄和每人的深渊装备</span></div>'}`;
@@ -728,6 +818,9 @@ function detail(src,id){if(src=='mk'){const x=((MX.data||{}).listings||[]).find(
  let h=`<h3 style="margin:0;color:${c}">${it.name_zh||it.name}</h3><div class=dim>${it.name}</div><div class=dim>${SN[it.slot]||it.slot} · L${it.level} · ${RN[it.rarity]||it.rarity}${it.quality?' · 品质 '+it.quality+'%':''}</div>
  <div style="margin:8px 0">${stat(it)}</div><div>耐久 ${it.durability}/${it.durability_max}${it.broken?' <span class=down>已损坏</span>':''}</div>`;
  if(it.worth&&it.worth.power!=null)h+=`<div>战力贡献 <b>${it.worth.power}</b></div>`;
+ if(akOf(id))h+=`<div style="margin-top:6px;color:#ffb27a">🔥 已用在深渊预设：英雄 ${akOf(id)}，别分解、丢弃或卖掉</div>`;
+ if((src=='worn'||src=='bag'||src=='stash')&&it.slot&&!it.bound)h+=gsBtns(id,it.slot);
+ if((src=='worn'||src=='bag')&&it.durability_max&&it.durability<it.durability_max)h+=`<div class=row style="margin-top:8px"><button class=gold onclick="rpOpen('${src}',${id})">🔧 修理（耐久 ${it.durability}/${it.durability_max}）</button></div>`;
  if(it.vs_worn&&it.vs_worn.power!=null)h+=`<div>对比当前穿戴 <b class=${it.vs_worn.power>=0?'up':'down'}>${it.vs_worn.power>=0?'+':''}${it.vs_worn.power}</b></div>`;
  if(it.implicit)h+=`<div class=dim style="margin-top:6px">固有</div>`+aff(it.implicit);
  if(it.grants)h+=it.grants.map(aff).join('');
@@ -754,6 +847,60 @@ function showSq(id){const q=(window.SQ||[]).find(x=>x.id==id);if(!q)return;openD
 function ask(msg){return new Promise(res=>{const dz=/分解|丢弃|卖出|撤销|下架|出售|挂卖/.test(msg);$('askt').textContent=dz?'请确认（注意）':'请确认';$('askm').textContent=msg;$('asky').className='ok'+(dz?' dz':'');$('ask').style.display='flex';
  const done=v=>{$('ask').style.display='none';document.removeEventListener('keydown',kd);res(v)};const kd=e=>{if(e.key=='Escape')done(false);if(e.key=='Enter')done(true)};
  $('asky').onclick=()=>done(true);$('askn').onclick=()=>done(false);$('ask').onclick=e=>{if(e.target.id=='ask')done(false)};document.addEventListener('keydown',kd);$('asky').focus()})}
+// 2026-11-20 喂食：英雄/主角吃背包或个人材料仓库的食物；主角可喂宠物（猎鹰/狮子，只吃生肉，每块 +5）
+const FDV={carrot:15,carrots:15,corn:20,roast:25,pumpkin:30,pumpkins:30,bread:40,corn_cake:45,corncake:45,stew:60,pie:70};let FDT='me';
+function fdSrc(pet){const s=ST||{},own=((STO||{}).own||{}).goods||{},bag=s.bag||{},r=[];const ks=pet?['meat']:Object.keys(FDV).sort((a,b)=>FDV[b]-FDV[a]);
+ for(const k of ks){if((bag[k]||0)>0)r.push({k,src:'bag',n:bag[k]});if((own[k]||0)>0)r.push({k,src:'own',n:own[k]})}return r}
+function fdOpen(){const s=ST||{};if(!s||s.error)return;const pets=UNIT?[]:(s.pets||[]);if(FDT!='me'&&!pets.some(p=>p.k==FDT))FDT='me';
+ const pf=FDT=='me'?s.food:(pets.find(p=>p.k==FDT)||{}).food;const pet=FDT!='me';const own=(STO||{}).own||{};
+ let h=`<h3 style="margin:0">🍖 喂食</h3><div class="row" style="margin-top:8px"><button class="${FDT=='me'?'on':''}" onclick="FDT='me';fdOpen()">${UNIT?'英雄 '+((UNITS&&(UNITS.units||[]).find(u=>u.hero==UNIT)||{}).name||UNIT):'主角'}</button>${pets.map(p=>`<button class="${FDT==p.k?'on':''}" onclick="FDT='${p.k}';fdOpen()">${p.k=='lion'?'🦁 狮子':'🦅 猎鹰'}</button>`).join('')}</div>`;
+ h+=`<div class=dim style="margin:6px 0">当前饱食 <b>${pf??'-'}</b>/100${pet?' · 宠物只吃生肉，每块 +5':''}${UNIT?' · 宠物只有主角有':''}</div>`;
+ const L=fdSrc(pet);if(!L.length)h+=`<div class=dim>背包和个人材料仓库里都没有${pet?'生肉':'可吃的食物'}</div>`;
+ else h+=L.map((f,i)=>{const v=pet?5:FDV[f.k];const need=Math.max(1,Math.ceil((100-(pf||0))/v));const q=Math.min(f.n,need,pet?40:20);
+  return `<div class=gsr><div class=t><b>${gname(f.k)}</b> <span class=dim>${f.src=='bag'?'背包':'仓库'} ×${f.n} · 每份 +${v}</span>${f.src=='own'?`<div class=dim style="font-size:11px">先从个人材料仓库取出（营地外占远程免费次数，今日剩 ${own.from_afar_left??'-'}）</div>`:''}</div><input id=fq${i} type=number min=1 max=${f.n} value=${q} style="width:56px"><button class=gold onclick="fdGo(${i})">喂</button></div>`}).join('');
+ h+=`<div class=row><button onclick="closeDlg()">关闭</button></div>`;openDlg(h)}
+async function fdGo(i){const pet=FDT!='me';const f=fdSrc(pet)[i];if(!f)return;const q=parseInt($('fq'+i).value);if(!(q>0&&q<=f.n))return toast('数量不对');
+ const who=pet?(FDT=='lion'?'狮子':'猎鹰'):(UNIT?'英雄':'主角');closeDlg();
+ if(f.src=='own'){const it={};it[f.k]=q;const b={action:'withdraw',store:'own',items:it};const r=pet?await j('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acct:ACCT,body:b})}):await post(b);if(!(r.result&&r.result.success))return toast('从仓库取出失败：'+errText(r),7000)}
+ if(pet){const r=await j('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acct:ACCT,body:{action:'feed',pet:FDT,meat:q}})});
+  toast(r.result&&r.result.success?`${who}吃了生肉×${q}`:`${who}喂食失败：`+errText(r),7000)}
+ else{let ok=0,err='';for(let n=0;n<q;n++){const r=await post({action:'eat',item:f.k});if(r.result&&r.result.success)ok++;else{err=errText(r);break}}
+  toast(`${who}吃了${gname(f.k)}×${ok}${err?'；停止：'+err.slice(0,80):''}`,err?8000:5000)}
+ load()}
+// 2026-11-20 修理：金币（任何地方）或材料（营地铁匠/部落熔炉·工坊 2 格内）；游戏不给事先报价，不够时游戏回报缺什么、缺多少
+function rpOpen(src,id){const it=find(src,id);if(!it)return;const lv=it.level||0,arm=['head','chest','legs','feet','offhand','shield'].includes(it.slot);
+ const ore=lv>15?(lv<24?'铜矿':lv<48?'铁矿':'星铁矿'):'';const need=it.durability_max-it.durability;const s=ST||{};
+ const mt=(arm?'兽皮':'木头')+' + 石头'+(ore?' + '+ore:'');
+ let h=`<h3 style="margin:0">🔧 修理 ${it.name_zh||it.name}</h3><div class=dim style="margin-top:4px">L${lv} · 耐久 ${it.durability}/${it.durability_max}，要补 ${need} 点${it.broken?' · 已损坏':''}</div>
+ <div class=gsr><div class=t><b>金币修理</b><div class=dim style="font-size:12px">任何地方都能修 · 你有 ${s.coins??'-'} 币</div></div><button class=gold onclick="rpGo(${id},'coins')">用金币修</button></div>
+ <div class=gsr><div class=t><b>材料修理</b><div class=dim style="font-size:12px">用 ${mt} · 要在营地铁匠或部落熔炉/工坊 2 格内${s.in_camp?'':' · <span class=down>现在不在营地</span>'}</div></div><button class=gold onclick="rpGo(${id},'materials')">用材料修</button></div>
+ <div class=dim style="font-size:11px">游戏不提供事先报价：金币或材料不够时不会扣任何东西，会弹出缺什么、缺多少；够的话直接修好并显示实际花费。</div>
+ <div class=row><button onclick="closeDlg()">取消</button></div>`;openDlg(h)}
+async function bdClaim(n){if(!await ask(`领取 ${n} 个已完成的悬赏？\n需要在营地（不在营地会提示失败，不扣东西）。`))return;const r=await post({action:'bounty'});
+ if(r.result&&r.result.success){const d=r.result;const g=[];if(d.xp)g.push(d.xp+' 经验');if(d.coins)g.push(d.coins+' 金币');const c=d.currencies||d.got||d.gained;if(c&&typeof c=='object')for(const[k,v]of Object.entries(c))g.push((GN[k]||k)+' ×'+v);toast('悬赏已领取'+(g.length?'：'+g.join('，'):''),8000);load()}else toast('领取失败：'+errText(r),8000)}
+function odHeld(g){const b=(ST||{}).bag||{};return +(b[g]||0)}
+function odOpen(){const O=((ST||{}).camp_orders||[]).filter(o=>!o.done&&!o.closed&&(o.yours_left??o.share)>0);
+ if(!O.length){toast('没有可提交的订单');return}
+ let h=`<h3 style="margin:0">📦 提交营地订单</h3><div class=dim style="margin-top:4px">每 2 小时只能交一次（只能选一个订单），交完这单本轮其他订单就关闭。需在营地。</div>`;
+ h+=O.map((o,k)=>{const yl=o.yours_left??o.share,hd=odHeld(o.goods),mx=Math.min(yl,hd);return `<label class=gsr style="cursor:pointer"><div class=t><b><input type=radio name=odr value=${o.id} ${k==0?'checked':''} ${mx<1?'disabled':''}> ${GN[o.goods]||o.goods}</b><div class=dim style="font-size:12px">我还能交 ${yl} · 背包有 ${hd}${hd<yl?' <span class=down>不够</span>':''} · 每个 ${o.xp_each} 经验 · ${o.coins_each} 币</div></div><span class=qstep><input id=odq${o.id} type=number min=1 max=${Math.max(mx,1)} value=${Math.max(mx,0)} style="width:64px" ${mx<1?'disabled':''}></span></label>`}).join('');
+ h+=`<div class=row><button onclick="closeDlg()">取消</button><button class=gold onclick="odGo()">提交</button></div>`;openDlg(h)}
+async function odGo(){const r0=document.querySelector('input[name=odr]:checked');if(!r0){toast('请选一个订单');return}const id=+r0.value;const o=((ST||{}).camp_orders||[]).find(x=>x.id==id);if(!o)return;
+ const yl=o.yours_left??o.share,hd=odHeld(o.goods);const q=parseInt(($('odq'+id)||{}).value);if(!(q>=1)){toast('数量不对');return}if(q>hd){toast(`背包只有 ${hd} 个${GN[o.goods]||o.goods}`);return}if(q>yl){toast(`这单你最多还能交 ${yl} 个`);return}
+ const part=q<yl;if(!await ask(`提交「${GN[o.goods]||o.goods}」×${q}？\n约得 ${Math.round(q*o.xp_each)} 经验 · ${(q*o.coins_each).toFixed(1)} 金币${part?`\n\n注意：只交 ${q}/${yl}，本轮这次提交机会会用掉，剩下的要等下一轮。`:''}`))return;
+ const r=await post({action:'deliver',order:id,qty:q});if(r.result&&r.result.success){const d=r.result;closeDlg();toast(`已提交 ${GN[o.goods]||o.goods}×${q}：+${d.xp??'-'} 经验 · +${d.coins??0} 金币`,8000);load()}else toast('提交失败：'+errText(r),8000)}
+async function pzBank(){const c=PZC[ACCT]||{},ch=c.chest||{};const ln=['bnb','usdt','bolt'].filter(a=>+ch[a]>0).map(a=>`${a.toUpperCase()} ${pzFmt(a,ch[a])} → 入库 ${pzFmt(a,ch[a]*0.8)}`).join('\n');
+ if(!await ask(`宝箱入库（普通方式）？\n${ln}\n\n留 4/5，1/5 作为贡品交给魔王。需在营地。入库后可提取到钱包。`))return;
+ const r=await post({action:'bank',mode:'pay'});if(r.result&&r.result.success){toast('已入库',6000);load()}else toast('入库失败：'+errText(r),8000)}
+const GZ={wood:'木头',stone:'石头',hide:'兽皮',copper_ore:'铜矿',ore:'铜矿',iron_ore:'铁矿',starmetal_ore:'星铁矿',dust:'符文尘',coins:'金币',TOTEM:'金币'};
+function rpName(k){return GZ[k]||(typeof gname=='function'?gname(k):k)}
+function rpMiss(e){e=String(e||'');let m=e.match(/costs ([\d.]+) (\w+).*?you have ([\d.]+)/i);if(m)return `需要 ${m[1]} 金币，你只有 ${m[3]}，还差 ${(+m[1]-+m[3]).toFixed(0)} 金币`;
+ m=e.match(/missing (.+)$/i);if(m)return '还缺：'+m[1].split(/,\s*/).map(x=>{const q=x.trim().match(/^([\d.]+)\s+(.+)$/);return q?rpName(q[2].trim().replace(/\s+/g,'_'))+' ×'+q[1]:x}).join('，')+(e.match(/takes (.+?);/)?'\n（总共需要：'+e.match(/takes (.+?);/)[1].split(/,\s*/).map(x=>{const q=x.trim().match(/^([\d.]+)\s+(.+)$/);return q?rpName(q[2].trim().replace(/\s+/g,'_'))+' ×'+q[1]:x}).join('，')+'）':'');return e}
+function rpPaid(r){const d=r.result||{},p=d.paid||d.cost||d.spent;if(p==null)return '';if(typeof p=='number')return '，花了 '+p+' 金币';if(typeof p=='object')return '，花了 '+Object.entries(p).map(([k,v])=>rpName(k)+' ×'+v).join('，');return '，花费 '+p}
+async function rpGo(id,w){const it=find('worn',id)||find('bag',id);const nm=it?(it.name_zh||it.name):'#'+id;
+ if(!await ask(`确认用${w=='coins'?'金币':'材料'}修理「${nm}」？\n耐久 ${it?it.durability+'/'+it.durability_max:''} → 满\n\n${w=='coins'?'会扣金币':'会扣材料'}；不够时不会扣，并告诉你缺多少。`))return;
+ const b={action:'repair',item:id};if(w=='materials')b.with='materials';const r=await post(b);
+ if(r.result&&r.result.success){closeDlg();toast(`「${nm}」已修好${rpPaid(r)}`,8000);load()}
+ else{const e=errText(r);openDlg(`<h3 style="margin:0;color:#ff7a6b">修理没成功</h3><div style="white-space:pre-wrap;margin:10px 0">${rpMiss(e).replace(/</g,'&lt;')}</div><div class=dim style="font-size:11px">${e.replace(/</g,'&lt;').slice(0,200)}</div><div class=row><button onclick="closeDlg()">知道了</button></div>`)}}
 function petLine(P){if(!P||!P.length)return '';return '<div style="font-size:12px;margin-top:2px">'+P.map(p=>{const low=p.hungry||(p.food!=null&&p.food<30);return `<span title="${p.k=='lion'?'狮子':'猎鹰'}饱食" style="margin-right:8px;${low?'color:#ff6b5e':'color:var(--dim)'}">${p.k=='lion'?'🦁':'🦅'} ${p.food??'-'}${low?'<i style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ff3b30;box-shadow:0 0 6px #ff3b30;margin-left:4px;vertical-align:middle"></i>':''}</span>`}).join('')+'</div>'}
 function runCell(n,l,m){if(l==null)return `<div><span class=dim>${n}</span><b>-</b></div>`;const dot=l>0?'<i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff3b30;box-shadow:0 0 6px #ff3b30;margin-left:5px;vertical-align:middle"></i>':'';return `<div><span class=dim>${n}</span><b style="${l>0?'':'color:var(--dim)'}">${l}/${m||1}${dot}</b></div>`}
 let TL=null,TLTAB='hero',TLSEL=null;
@@ -988,7 +1135,7 @@ async function abpSet(sel,hid,slot){const v=sel.value,prev=sel.dataset.cur;if(v=
  const p=it==null?null:(ABP.pool||[]).find(x=>x.id==it);const msg=it==null?`清空英雄 #${hid} 的深渊「${SN[slot]||slot}」格？`:`英雄 #${hid} 的深渊「${SN[slot]||slot}」改用：${p?(p.name_zh+' L'+p.level+'（'+p.src+'）'):'#'+it}？\n（只改深渊配装，装备不会被移动）`;
  if(!await abpPost({action:'abyss',do:'kit',hero:hid,slot:slot,item:it},msg))sel.value=prev}
 async function abpPost(b,msg){if(!await ask(msg))return false;let r;try{r=await j('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acct:ACCT,body:b})})}catch(e){r=null}
- const ok=r&&r.result&&r.result.success;toast(ok?'已完成':'失败：'+((r&&(r.error||(r.result&&(r.result.error||r.result.message))))||'未知'),5000);if(ok&&b.do=='team')ABPDIRTY=false;loadAbp(true);return true}
+ const ok=r&&r.result&&r.result.success;toast(ok?'已完成':'失败：'+((r&&(r.error||(r.result&&(r.result.error||r.result.message))))||'未知'),5000);if(ok&&b.do=='team')ABPDIRTY=false;if(ok)loadAk(true);loadAbp(true);return true}
 function abpOpts(x,slot,used){const d=ABP,mw=new Set(d.main_worn||[]),g=(x.gear||{})[slot],cur=x.kit&&g?g.id:'';
  const ps=(d.pool||[]).filter(p=>p.slot==slot&&!mw.has(p.id)&&(p.level==null||p.level<=(x.level||0)+2)).sort((a,b)=>(abpAby(b)-abpAby(a))||((ABPRR[b.rarity]||0)-(ABPRR[a.rarity]||0))||((b.level||0)-(a.level||0)));
  let h=x.kit?'':`<option value="" selected>— 用身上穿的${g?'：'+(g.name_zh||g.name):''} —</option>`;
@@ -1022,7 +1169,7 @@ async function act(body,label){const p0=ST.power,q0=ST.squad_power;const r=await
  else toast(label+'失败：'+errText(r),6000)}
 async function equipFromStash(id){const r=await post({action:'unstash',item:id});if(!(r.result&&r.result.success)){toast('取出失败：'+errText(r));return}await act({action:'equip',item:id},'穿上')}
 async function sellItem(id){const p=parseFloat($('sp').value);if(!(p>=1)){toast('请输入出售价（至少 1 币）');return}
- if(!await ask(`以 ${p} 币挂单出售？（营地抽 6%，押金 1 币）`))return;const r=await post({action:'sell',item:id,price:p});
+ if(!await ask(`以 ${p} 币挂单出售？（营地抽 6%，押金 1 币）`+akWarn(id)))return;const r=await post({action:'sell',item:id,price:p});
  if(r.result&&r.result.success){toast('已挂单');closeDlg();load()}else toast('挂单失败：'+errText(r),6000)}
 function sellGoods(k){const n=(ST.bag||{})[k]||0;openDlg(`<h3 style="margin:0">${gname(k)}</h3><div class=dim>持有 ${n}</div>
  <div class=row>数量 <input id=gq type=number min=1 max=${n} value=${n}> 单价 <input id=gp type=number min=0.01 step=0.01 placeholder=金币></div>
@@ -1037,12 +1184,12 @@ async function doSellGoods(k){const q=parseInt($('gq').value),p=parseFloat($('gp
  if(r.result&&r.result.success){const sb=r.result.sold_to_bids;toast('已挂单'+(sb?'（部分直接卖给收购单）':''));closeDlg();load()}else toast('挂单失败：'+errText(r),6000)}
 async function unlist(id,name){if(!await ask(`下架「${name}」？押金 1 币不退。`))return;const r=await post({action:'unlist',listing:id});
  if(r.result&&r.result.success){toast('已下架');load()}else toast('下架失败：'+errText(r),6000)}
-async function salvage(id,name){if(!await ask(`确定分解「${name}」？分解后无法恢复。（在营地会自动走到工作台旁，花少量体力）`))return;const r=await post({action:'salvage',item:id});
+async function salvage(id,name){if(!await ask(`确定分解「${name}」？分解后无法恢复。（在营地会自动走到工作台旁，花少量体力）`+akWarn(id)))return;const r=await post({action:'salvage',item:id});
  if(r.result&&(r.result.success||r.result.queued||r.code==202)){const ZH={dust:'卢恩尘',crystal:'灵晶',shard:'星屑'};const g=r.result.gained||{};const t=Object.keys(g).map(k=>(ZH[k]||k)+' ×'+g[k]).join('，');toast('已分解「'+name+'」，获得：'+(t||'（暂未读到变化，稍后刷新查看背包）'),8000);closeDlg();load()}else toast('分解失败：'+errText(r),6000)}
 async function identify(id,name,cost){if(!await ask(`鉴定「${name}」？花 ${cost} 币（5 + 每级 2），需在营地。`))return;const r=await post({action:'identify',item:id});
  if(r.result&&r.result.success){toast('已鉴定',4000);await load();detailAfter(id)}else toast('鉴定失败：'+errText(r),6000)}
 function detailAfter(id){for(const s of ['bag','stash','worn']){if(find(s,id)){detail(s,id);return}}closeDlg()}
-async function discardItem(id,name){if(!await ask(`丢弃「${name}」？丢弃后直接消失，无法恢复，也不得任何材料。`))return;const r=await post({action:'discard',item:id});
+async function discardItem(id,name){if(!await ask(`丢弃「${name}」？丢弃后直接消失，无法恢复，也不得任何材料。`+akWarn(id)))return;const r=await post({action:'discard',item:id});
  if(r.result&&r.result.success){toast('已丢弃');closeDlg();load()}else toast('丢弃失败：'+errText(r),6000)}
 // 2026-11-15 day/night header: Wilds day = 2 real hours, night 19:30-05:00 game clock (skill.md), anchored to UTC+8 midnight; server me.hero.bonus.night_now wins if it disagrees
 function dnTick(){const e=$('dn');if(!e)return;const t=((Date.now()/1000+28800)%7200+7200)%7200,h=t/300;let n=(h>=19.5||h<5),r=n?((h>=19.5?29:5)-h)*300:(19.5-h)*300;
