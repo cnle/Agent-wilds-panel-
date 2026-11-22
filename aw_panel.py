@@ -482,7 +482,7 @@ class H(BaseHTTPRequestHandler):
             if acct not in ACCTS or body.get("action") not in ALLOWED:
                 return self.send(400, {"error": "不允许的操作"})
             body = {k: v for k, v in body.items() if k in ("action", "item", "goods", "qty", "price", "per", "listing", "slot", "unit", "items", "store", "tribe", "do", "box", "talent", "points", "node", "pick", "hero", "listing", "max_each", "pet", "meat", "order", "mode", "with")}  # 2026-11-20 15:10 修复：之前 with 被过滤掉，材料修理变成金币修
-            if body.get("action") == "repair" and (not isinstance(body.get("item"), int) or body.get("with") not in (None, "materials")): return self.send(400, {"error": "修理参数不对"})
+            if body.get("action") == "repair" and (not isinstance(body.get("item"), int) or body.get("with") not in (None, "materials", "dust")): return self.send(400, {"error": "修理参数不对"})
             if body.get("action") == "bounty": body = {"action": "bounty", **({"unit": body["unit"]} if "unit" in body else {})}  # 2026-11-20 悬赏一键领取
             if body.get("action") == "deliver":  # 2026-11-20 订单提交：选订单+数量
                 o_, q_ = body.get("order"), body.get("qty")
@@ -623,7 +623,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;pad
 .stats{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px}.stats b{font-size:22px;display:block;color:#fff}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:7px}
 .it{border:1px solid var(--line);border-left:4px solid #888;border-radius:8px;padding:7px 9px;cursor:pointer;background:rgba(10,9,8,.45)}.it.akit{outline:1px solid rgba(255,120,60,.7);background:rgba(255,110,50,.09)}.gsb{display:inline-block;font-size:11px;color:#8fd3ff;border:1px solid rgba(110,190,255,.6);border-radius:6px;padding:0 5px;margin-left:4px}.it.gsit{box-shadow:inset 0 0 0 1px rgba(110,190,255,.45)}.fdl{display:inline-block;cursor:pointer;color:#f0c35a;border:1px solid rgba(240,195,90,.55);border-radius:6px;padding:0 6px;background:rgba(240,195,90,.1)}.fdl:active{background:rgba(240,195,90,.3)}.fdb{display:block;margin-top:4px;font-size:12px;padding:2px 8px;line-height:1.4}
-.gsr{display:flex;align-items:center;gap:6px;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0;background:rgba(10,9,8,.4)}.gsr .t{flex:1;min-width:160px}.gsp button.on{background:rgba(110,190,255,.25);border-color:rgba(110,190,255,.8);color:#cfeaff}.akb{display:inline-block;font-size:11px;color:#ffb27a;border:1px solid rgba(255,140,80,.6);border-radius:6px;padding:0 5px;margin-left:4px}
+.gsr{display:flex;align-items:center;gap:6px;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0;background:rgba(10,9,8,.4)}.gsr .t{flex:1;min-width:160px}.rpi{font-size:22px;min-width:52px;padding:6px 10px;line-height:1}.gsp button.on{background:rgba(110,190,255,.25);border-color:rgba(110,190,255,.8);color:#cfeaff}.akb{display:inline-block;font-size:11px;color:#ffb27a;border:1px solid rgba(255,140,80,.6);border-radius:6px;padding:0 5px;margin-left:4px}
 .it:hover{background:rgba(60,50,35,.6)}.it .n{font-weight:600}.it .s{color:var(--dim);font-size:12px}.broken{opacity:.55}
 .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
 table{width:100%;border-collapse:collapse;font-size:13px;min-width:560px}td,th{padding:6px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{color:var(--dim);font-weight:normal}
@@ -924,9 +924,9 @@ function rpOpen(src,id){const it=find(src,id);if(!it)return;const lv=it.level||0
  const ore=lv>15?(lv<24?'铜矿':lv<48?'铁矿':'星铁矿'):'';const need=it.durability_max-it.durability;const s=ST||{};
  const mt=(arm?'兽皮':'木头')+' + 石头'+(ore?' + '+ore:'');
  let h=`<h3 style="margin:0">🔧 修理 ${it.name_zh||it.name}</h3><div class=dim style="margin-top:4px">L${lv} · 耐久 ${it.durability}/${it.durability_max}，要补 ${need} 点${it.broken?' · 已损坏':''}</div>
- <div class=gsr><div class=t><b>金币修理</b><div class=dim style="font-size:12px">任何地方都能修 · 你有 ${s.coins??'-'} 币</div></div><button class=gold onclick="rpGo(${id},'coins')">用金币修</button></div>
- <div class=gsr><div class=t><b>材料修理</b><div class=dim style="font-size:12px">用 ${mt} · 要在营地铁匠或部落熔炉/工坊 2 格内${s.in_camp?'':' · <span class=down>现在不在营地</span>'}</div></div><button class=gold onclick="rpGo(${id},'materials')">用材料修</button></div>
- <div class=dim style="font-size:11px">游戏不提供事先报价：金币或材料不够时不会扣任何东西，会弹出缺什么、缺多少；够的话直接修好并显示实际花费。</div>
+ <div class=gsr><div class=t><b>金币修理</b><div class=dim style="font-size:12px">任何地方都能修 · 你有 ${s.coins??'-'} 币</div></div><button class="gold rpi" title="用金币修" aria-label="用金币修" onclick="rpGo(${id},'coins')">🪙</button></div>
+ <div class=gsr><div class=t><b>材料 / 符尘修理</b><div class=dim style="font-size:12px">🪵 用 ${mt} · ☁️ 用符尘（你有 ${(s.bag||{}).dust??0}）<br>都要在营地铁匠或部落熔炉/工坊 2 格内${s.in_camp?'':' · <span class=down>现在不在营地</span>'}</div></div><span style="display:flex;gap:8px"><button class="gold rpi" title="用材料修" aria-label="用材料修" onclick="rpGo(${id},'materials')">🪵</button><button class="gold rpi" title="用符尘修" aria-label="用符尘修" onclick="rpGo(${id},'dust')">☁️</button></span></div>
+ <div class=dim style="font-size:11px">游戏不提供事先报价：金币、材料或符尘不够时不会扣任何东西，会弹出缺什么、缺多少；够的话直接修好并显示实际花费。</div>
  <div class=row><button onclick="closeDlg()">取消</button></div>`;openDlg(h)}
 async function bdClaim(n){if(!await ask(`领取 ${n} 个已完成的悬赏？\n需要在营地（不在营地会提示失败，不扣东西）。`))return;const r=await post({action:'bounty'});
  if(r.result&&r.result.success){const d=r.result;const g=[];if(d.xp)g.push(d.xp+' 经验');if(d.coins)g.push(d.coins+' 金币');const c=d.currencies||d.got||d.gained;if(c&&typeof c=='object')for(const[k,v]of Object.entries(c))g.push((GN[k]||k)+' ×'+v);toast('悬赏已领取'+(g.length?'：'+g.join('，'):''),8000);load()}else toast('领取失败：'+errText(r),8000)}
@@ -949,8 +949,8 @@ function rpMiss(e){e=String(e||'');let m=e.match(/costs ([\d.]+) (\w+).*?you hav
  m=e.match(/missing (.+)$/i);if(m)return '还缺：'+m[1].split(/,\s*/).map(x=>{const q=x.trim().match(/^([\d.]+)\s+(.+)$/);return q?rpName(q[2].trim().replace(/\s+/g,'_'))+' ×'+q[1]:x}).join('，')+(e.match(/takes (.+?);/)?'\n（总共需要：'+e.match(/takes (.+?);/)[1].split(/,\s*/).map(x=>{const q=x.trim().match(/^([\d.]+)\s+(.+)$/);return q?rpName(q[2].trim().replace(/\s+/g,'_'))+' ×'+q[1]:x}).join('，')+'）':'');return e}
 function rpPaid(r){const d=r.result||{},p=d.paid||d.cost||d.spent;if(p==null)return '';if(typeof p=='number')return '，花了 '+p+' 金币';if(typeof p=='object')return '，花了 '+Object.entries(p).map(([k,v])=>rpName(k)+' ×'+v).join('，');return '，花费 '+p}
 async function rpGo(id,w){const it=find('worn',id)||find('bag',id);const nm=it?(it.name_zh||it.name):'#'+id;
- if(!await ask(`确认用${w=='coins'?'金币':'材料'}修理「${nm}」？\n耐久 ${it?it.durability+'/'+it.durability_max:''} → 满\n\n${w=='coins'?'会扣金币':'会扣材料'}；不够时不会扣，并告诉你缺多少。`))return;
- const b={action:'repair',item:id};if(w=='materials')b.with='materials';const r=await post(b);
+ if(!await ask(`确认用${w=='coins'?'金币':w=='dust'?'符尘':'材料'}修理「${nm}」？\n耐久 ${it?it.durability+'/'+it.durability_max:''} → 满\n\n${w=='coins'?'会扣金币':w=='dust'?'会扣符尘（要在营地铁匠旁）':'会扣材料'}；不够时不会扣，并告诉你缺多少。`))return;
+ const b={action:'repair',item:id};if(w=='materials'||w=='dust')b.with=w;const r=await post(b);
  if(r.result&&r.result.success){closeDlg();toast(`「${nm}」已修好${rpPaid(r)}`,8000);load()}
  else{const e=errText(r);openDlg(`<h3 style="margin:0;color:#ff7a6b">修理没成功</h3><div style="white-space:pre-wrap;margin:10px 0">${rpMiss(e).replace(/</g,'&lt;')}</div><div class=dim style="font-size:11px">${e.replace(/</g,'&lt;').slice(0,200)}</div><div class=row><button onclick="closeDlg()">知道了</button></div>`)}}
 function petLine(P){if(!P||!P.length)return '';return '<div style="font-size:12px;margin-top:2px">'+P.map(p=>{const low=p.hungry||(p.food!=null&&p.food<30);return `<span title="${p.k=='lion'?'狮子':'猎鹰'}饱食" style="margin-right:8px;${low?'color:#ff6b5e':'color:var(--dim)'}">${p.k=='lion'?'🦁':'🦅'} ${p.food??'-'}${low?'<i style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ff3b30;box-shadow:0 0 6px #ff3b30;margin-left:4px;vertical-align:middle"></i>':''}</span>`}).join('')+'</div>'}
