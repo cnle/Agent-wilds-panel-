@@ -215,6 +215,16 @@ def slim_me(m):
 TCAT = [{'id': 'sharp', 'path': 'hunt', 'opens_at': 0, 'max': 5, 'name': 'Keen Edge', 'name_zh': '锋锐', 'does_zh': '每级伤害 +3%'}, {'id': 'tough', 'path': 'hunt', 'opens_at': 5, 'max': 5, 'name': 'Thick Hide', 'name_zh': '坚毅', 'does_zh': '每级生命上限 +12'}, {'id': 'hawk', 'path': 'hunt', 'opens_at': 10, 'max': 5, 'name': 'Hawk Eye', 'name_zh': '鹰目', 'does_zh': '每级暴击率 +1%'}, {'id': 'slayer', 'path': 'hunt', 'opens_at': 15, 'max': 5, 'name': 'Champion Slayer', 'name_zh': '屠精', 'does_zh': '每级对精英、守卫和首领伤害 +6%'}, {'id': 'bounty', 'path': 'gather', 'opens_at': 0, 'max': 5, 'name': 'Full Hands', 'name_zh': '丰收手', 'does_zh': '每级采集力 +4'}, {'id': 'stride', 'path': 'gather', 'opens_at': 5, 'max': 5, 'name': 'Trailwise', 'name_zh': '疾行', 'does_zh': '每级移动力 +3'}, {'id': 'green', 'path': 'gather', 'opens_at': 10, 'max': 5, 'name': 'Green Thumb', 'name_zh': '农艺', 'does_zh': '每级丰收力 +5'}, {'id': 'prospector', 'path': 'gather', 'opens_at': 15, 'max': 5, 'name': 'Prospector', 'name_zh': '探矿', 'does_zh': '每级矿石产量 +8%'}, {'id': 'mason', 'path': 'build', 'opens_at': 0, 'max': 5, 'name': 'Mason', 'name_zh': '巧匠', 'does_zh': '每级建造速度 +5%'}, {'id': 'thrift', 'path': 'build', 'opens_at': 5, 'max': 5, 'name': 'Thrift', 'name_zh': '节俭', 'does_zh': '每级修理花费 −5%'}, {'id': 'salvager', 'path': 'build', 'opens_at': 10, 'max': 5, 'name': 'Salvager', 'name_zh': '拆解', 'does_zh': '每级分解时 10% 几率多得 1 个灵晶'}, {'id': 'artisan', 'path': 'build', 'opens_at': 15, 'max': 5, 'name': 'Artisan', 'name_zh': '名匠', 'does_zh': '每级打造的装备等级 +1'}]
 _DR = {}
 _TREE = None
+_TC = {}
+def tribe_coins(acct, tag):
+    import time as _t
+    if not tag: return 0
+    hit = _TC.get(tag)
+    if hit and _t.time() - hit[0] < 60: return hit[1]
+    c, tr = api(acct, "GET", "/world/tribes/" + tag)
+    v = ((tr or {}).get("tribe") or tr or {}).get("coins") if c == 200 else None
+    if v is None: return hit[1] if hit else 0
+    _TC[tag] = (_t.time(), v); return v
 def daily_runs(acct, un=""):
     import time as _t, threading
     k = (acct, un); hit = _DR.get(k)
@@ -301,6 +311,7 @@ class H(BaseHTTPRequestHandler):
             c, d = api(acct, "GET", "/world/me" + ("?unit=" + un if un.isdigit() else ""))
             if c != 200: return self.send(c or 502, d)
             o = slim_me(d.get("me", {})); o.update(daily_runs(acct, un if un.isdigit() else ""))
+            o["tribe_coins"] = tribe_coins(acct, ((d.get("me") or {}).get("tribe") or {}).get("tag"))  # 2026-11-23 06:03 user: 英雄卡显示部落金库,无部落为0
             o["pool"] = pool_info(acct); o["prices"] = {k: PRICE.get(k) for k in ("bnb", "bolt")}
             return self.send(200, o)
         if u.path == "/api/mkt":
@@ -810,7 +821,7 @@ function renderTk(s){const el=$('tkc');if(!el||!s)return;const B=s.bounties||[],
  el.innerHTML=h;tkPos();const hid=!!localStorage.tkHid;el.classList.toggle('hid',hid);$('tkt').style.display=hid?'block':'none'}
 function render(){const s=ST;renderTk(s);renderPz(s);if(!s||s.error){$('hero').textContent=JSON.stringify(s);return}
  const hh=s.hero||{},hg=hh.grade||(hh.kind=='demon_lord'?'lord':''),hn=hh.kind=='demon_lord'?'魔王'+(hh.title&&hh.title.zh?'·'+hh.title.zh:''):(GRD[hh.grade]||'')+(ROL[hh.role]||'');if(!UNIT){const mt=document.querySelector('.ut[data-u=""]');if(mt){mt.className=mt.className.replace(/ ?g-\S+/g,'');if(hg)mt.classList.add('g-'+hg)}window.MAINHG=hg}
- $('loc').textContent=`${s.name||''} · L${s.level} · (${s.x},${s.y}) ${s.in_camp?'营地':s.ring}`;
+ $('loc').textContent=`${UNIT?'':'金库:'+(s.tribe_coins??0)+' · '}${s.name||''} · L${s.level} · (${s.x},${s.y}) ${s.in_camp?'营地':s.ring}`;
  const sq=(s.hero&&s.hero.squad)||[];
  $('hero').innerHTML=`<div class=stats><div><span class=dim>个人战力</span><b>${s.power??(s.gear_score&&s.gear_score.power)??'-'}</b></div><div><span class=dim>队伍总战力</span><b>${s.squad_power??'-'}</b></div><div ${UNIT?'':'onclick="openFx()" style="cursor:pointer" title="点击进入金币交易所"'}><span class=dim>金币${UNIT?'':' <span style="color:#f0c35a">交易›</span>'}</span><b>${s.coins}</b></div><div><span class=fdl onclick="event.stopPropagation();fdOpen()" title="点击喂食">饱食</span><b>${s.food}</b>${UNIT?'':petLine(s.pets)}</div><div><span class=dim>今日战功</span><b>${s.deeds_today??'-'}/${s.deeds_cap??4200}</b></div><div ${UNIT?'':'onclick="openQm()" style="cursor:pointer" title="点击用溢出战功兑换"'}><span class=dim>溢出战功${UNIT?'':' <span style="color:#f0c35a">兑换›</span>'}</span><b>${s.deeds_banked??'-'}</b></div>${runCell('深渊',s.abyss_left,s.abyss_max)}${runCell('迷雾',s.fog_left,s.fog_max)}</div>
  ${bar(s.hp,s.max_hp,'#d9534f','血量')}${bar(s.xp,s.xp_next,'#7b6cf0','经验（升下一级）')}${bar(s.ap,s.ap_max,'#3fb6d6','体力 AP')}
