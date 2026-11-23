@@ -890,7 +890,7 @@ function detail(src,id){if(src=='mk'){const x=((MX.data||{}).listings||[]).find(
  if(src=='bag')h+=`<button class=gold onclick="act({action:'equip',item:${id}},'穿上')">穿上</button>`+(it.bound?'':`<button onclick="act({action:'stash',item:${id}},'放入仓库')">放入仓库</button>`);
  if(src=='tstash'){const tt=(STO||{}).tstash||{};h+=tt.can_take?`<button class=gold onclick="stAct({action:'unstash',item:${id},tribe:true},'取出到背包')">取出到背包</button>`:`<span class=dim>部落设为仅干部可取，你没有取出权限</span>`}
  if(src=='abox')h+=`<button class=gold onclick="claimBox(${id})">领取到背包（需在营地）</button>`;
- if(src=='bag'&&!it.bound&&(STO||{}).tag){const ct=((STO||{}).tstash||{}).can_take;h+=ct===true?`<button onclick="stAct({action:'stash',item:${id},tribe:true},'存入部落装备库')">存入部落装备库</button>`:`<button disabled style="opacity:.4;cursor:not-allowed" title="${ct===false?'你没有部落装备库取出权限，存入后取不回来':'正在读取部落权限'}">存入部落装备库${ct===false?'（无取出权限）':''}</button>`}
+ if(src=='bag'&&!it.bound&&(STO||{}).tag){const ct=((STO||{}).tstash||{}).can_take;h+=ct===true?`<button onclick="stAct({action:'stash',item:${id},tribe:true},'存入部落装备库')">存入部落装备库</button>`:`<button disabled style="opacity:.4;cursor:not-allowed" title="${ct===false?'你没有部落装备库取出权限，存入后取不回来':'正在读取部落权限'}">存入部落装备库</button>`}
  if(src=='stash')h+=`<button class=gold onclick="equipFromStash(${id})">穿上</button><button onclick="act({action:'unstash',item:${id}},'取回背包')">取回背包</button>`;
  if(src=='bag'&&it.bound)h+=`</div><div class=dim style="margin-top:6px">新手绑定装备：不能出售、分解或放仓库，只能穿或丢弃。</div><div class=row><button class=red onclick="discardItem(${id},'${(it.name_zh||it.name).replace(/'/g,'')}')">丢弃</button>`;
  else if(src=='bag')h+=`</div><div class=row>出售价 <input id=sp type=number min=1 step=1 placeholder=金币> <button onclick="sellItem(${id})">挂单出售</button>
