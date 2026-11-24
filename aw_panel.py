@@ -681,8 +681,8 @@ input{background:rgba(0,0,0,.4);color:var(--txt);border:1px solid rgba(240,195,9
 <main>
  <div class=card><h2>英雄 <span id=loc class=dim></span></h2><div id=hero></div></div>
  <div class=card><h2 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">穿戴装备 <span class=dim>点击可卸下</span><button class=gold style="margin-left:auto;font-size:13px;padding:3px 12px" onclick="gsOpen()">⚡ 一键穿戴</button></h2><div id=worn class=grid></div></div>
- <div class=card><h2>装备背包 <span id=gbc class=dim></span></h2><div id=gbag class=grid></div></div>
- <div class=card><h2>仓库 <span id=stc class=dim></span></h2><div id=stabs class=stabs></div><div id=stash class=grid></div><div id=stash2></div></div>
+ <div class=card><h2>装备背包 <span id=gbc class=dim></span></h2><div id=gbag></div></div>
+ <div class=card><h2>仓库 <span id=stc class=dim></span></h2><div id=stabs class=stabs></div><div id=stash></div><div id=stash2></div></div>
  <div class="card full"><h2>物品与材料 <span class=dim>点击可出售</span></h2><div id=goods class=bag></div></div>
  <div class="card full"><h2>市场挂单与收益 <span class=dim id=mkt_sum></span></h2><div id=market></div></div>
 </main>
@@ -700,8 +700,12 @@ const GCUR=new Set(['wakestone','shiftrune','addrune','whetstone','plating','cle
 const GESS=new Set(['dust','crystal','shard']);const GFARM=new Set(['wheat','carrot','corn','pumpkin']);
 const GFOOD=new Set(['roast','bread','stew','pie','bandage','corn_cake','veggie_soup','skewer','meat_pie','bone_broth','feast','gel_bandage','tusk_broth','antler_soup','bear_cake','fried_scorpion','night_draught','hunter_draught','tiger_draught','bone_draught','stone_draught','spirit_draught','blood_draught','frost_draught']);
 const GBASIC=new Set(['wood','stone','ore','iron_ore','starmetal_ore','herb','hide','meat','bone','ancient_wood','mithril','rare_hide','spirit_grain']);
-const GORD=[['food','🍞 食物与药剂'],['ess','✨ 精华'],['cur','💠 通货'],['gem','💎 宝石'],['basic','🪵 基础材料'],['farm','🌾 作物·种子·食谱'],['drop','🦴 怪物掉落'],['other','📦 其他']];
+const GORD=[['food','🍞 食物与药剂'],['ess','✨ 精华'],['cur','💠 通货'],['gem','💎 宝石'],['basic','🔨 基础材料'],['farm','🌾 作物·种子·食谱'],['drop','🦴 怪物掉落'],['other','📦 其他']];
 function gcat(k){if(GFOOD.has(k))return 'food';if(GESS.has(k))return 'ess';if(GCUR.has(k))return 'cur';if(/^gem_/.test(k))return 'gem';if(GBASIC.has(k))return 'basic';if(GFARM.has(k)||/_seed$|^recipe_/.test(k))return 'farm';if(/invite|key|map|scroll/.test(k))return 'other';return 'drop'}
+const GSLOT=[['weapon','⚔️ 武器'],['offhand','🛡️ 副手'],['head','⛑️ 头部'],['chest','🥋 胸甲'],['legs','👖 腿部'],['hands','🧤 手部'],['feet','👢 脚部'],['ring','💍 戒指'],['amulet','📿 项链'],['tool','⛏️ 工具']];
+function gearHtml(list,src,pf){list=list||[];if(!list.length)return '<span class=dim>空</span>';const G={};list.forEach(i=>{const k=GSLOT.some(x=>x[0]==i.slot)?i.slot:'other';(G[k]=G[k]||[]).push(i)});const cl=JSON.parse(localStorage.gcol||'{}');
+ return '<div class=bag>'+GSLOT.concat([['other','📦 其它']]).filter(([k])=>G[k]).map(([k,t])=>{const id=pf+k,col=!!cl[id];return `<div class=gsec><div class=gsh onclick="gfTog(this,'${id}')"><span>${t}</span><span class=dim>${G[k].length} 件 <i>${col?'▸':'▾'}</i></span></div><div class=grid style="padding:7px;${col?'display:none':''}">${G[k].map(i=>card(i,src)).join('')}</div></div>`}).join('')+'</div>'}
+function gfTog(h,id){const cl=JSON.parse(localStorage.gcol||'{}');cl[id]=!cl[id];localStorage.gcol=JSON.stringify(cl);const b=h.nextElementSibling;b.style.display=cl[id]?'none':'';h.querySelector('i').textContent=cl[id]?'▸':'▾'}
 function bagHtml(bag,click,pf=''){const E=Object.entries(bag||{}).filter(([k,v])=>typeof v=='number'&&v>0);if(!E.length)return '<span class=dim>空</span>';const G={};E.forEach(([k,v])=>(G[gcat(k)]=G[gcat(k)]||[]).push([k,v]));
  const cl=JSON.parse(localStorage.gcol||'{}');
  return GORD.filter(([c])=>G[c]).map(([c,t])=>{const L=G[c].sort((a,b)=>c=='gem'?(a[0]<b[0]?-1:1):b[1]-a[1]);const col=!!cl[pf+c];
@@ -766,7 +770,7 @@ async function openUnit(id){openDlg('<div class=dim>加载中…</div>');const d
  let x=`<h3 style="margin:0">${d.name||id} · L${d.level}</h3><div class=dim>${GRD[h.grade]||h.grade||''}${ROL[h.role]||h.role||(h.title&&h.title.zh)||h.kind||''} · ${d.ring=='camp'?'营地':d.ring} (${d.x},${d.y})</div>
  <div class=dim>血 ${d.hp}/${d.max_hp} · 体力 ${d.ap}/${d.ap_max} · 金币 ${d.coins||0}${d.power!=null?' · 战力 '+d.power:''}</div>
  <h4 style="margin:10px 0 6px;color:var(--acc)">已穿戴（${worn.length}）</h4><div class=grid>${worn.map(i=>card(i,'uworn')).join('')||'<span class=dim>无</span>'}</div>
- <h4 style="margin:10px 0 6px;color:var(--acc)">装备背包（${(d.gear_bag||[]).length}${d.gear_bag_max?'/'+d.gear_bag_max:''}）</h4><div class=grid>${(d.gear_bag||[]).map(i=>card(i,'ubag')).join('')||'<span class=dim>空</span>'}</div>
+ <h4 style="margin:10px 0 6px;color:var(--acc)">装备背包（${(d.gear_bag||[]).length}${d.gear_bag_max?'/'+d.gear_bag_max:''}）</h4>${gearHtml(d.gear_bag,'ubag','ub_')}
  <h4 style="margin:10px 0 6px;color:var(--acc)">物品与材料</h4><div class=bag>${bagHtml(d.bag,0)}</div>
  <div class=row><button onclick="closeDlg()">关闭</button></div>`;openDlg(x)}
 const RINGZ={camp:'营地',meadow:'草原',forest:'森林',highlands:'高地',ashlands:'灰烬地',ruins:'废墟'};
@@ -828,7 +832,7 @@ function render(){const s=ST;renderTk(s);renderPz(s);if(!s||s.error){$('hero').t
  <div class=dim>攻击 ${s.attack} · 防御 ${s.defense} · 暴击 ${s.crit}% · ${UNIT?'英雄 '+(hn||s.hero.kind||''):'主英雄 '+(hn||(s.hero.title&&s.hero.title.zh)||s.hero.kind||'')}${s.hero.path&&s.hero.path.zh?' · '+s.hero.path.zh:''}</div>
  <div class=dim style="margin-top:6px">队伍：${sq.map(h=>({starlit:'星辉',gold:'金',silver:'银',iron:'铁'}[h.grade]||h.grade||'')+({farmer:'农夫',miner:'矿工',hunter:'猎人',woodcutter:'樵夫',builder:'工匠'}[h.role]||h.role||h.kind)).join('、')||'无'}</div>${UNIT?'':'<div class=row style="margin-top:10px"><button class=gold onclick="abpOpen()">🔥 深渊预设</button><span class=dim style="font-size:12px">预设深渊英雄和每人的深渊装备</span></div>'}`;
  const worn=Object.values(s.worn||{}).filter(Boolean);$('worn').innerHTML=worn.map(i=>card(i,'worn')).join('')||'<span class=dim>无</span>';
- $('gbc').textContent=`${(s.gear_bag||[]).length}/${s.gear_bag_max}`;$('gbag').innerHTML=(s.gear_bag||[]).map(i=>card(i,'bag')).join('')||'<span class=dim>空</span>';
+ $('gbc').textContent=`${(s.gear_bag||[]).length}/${s.gear_bag_max}`;$('gbag').innerHTML=gearHtml(s.gear_bag,'bag','gb_');
  renderStores();
  $('goods').innerHTML=bagHtml(s.bag,1);
  renderMarket()}
@@ -842,7 +846,7 @@ function renderStores(){const s=ST||{},o=STO||{};const own=o.own||{},ts=o.tstore
  $('stabs').innerHTML=tabs.map(t=>`<span class="stb ${STAB==t[0]?'on':''} ${t[0]=='ab'&&ab.length?'red':''}" onclick="pickStab('${t[0]}')">${t[1]} ${t[2]}</span>`).join('');
  const cur=tabs.find(t=>t[0]==STAB)||tabs[0];STAB=cur[0];$('stc').textContent=UNIT?'（主角账号）':'';
  let g='',x='';
- if(STAB=='me'){g=(s.stash||[]).map(i=>card(i,'stash')).join('')||'<span class=dim>空</span>'}
+ if(STAB=='me'){g=gearHtml(s.stash,'stash','gs_')}
  else if(STAB=='own'){x=`<div class=dim style="margin-bottom:6px">各英雄共用，营地内免费存取；今日远程免费 ${own.from_afar_left??'-'}/${own.from_afar_a_day??'-'} 格${own.next_price!=null?' · 扩 5 格 '+own.next_price+' 币':''}</div><div class=bag>${goodsHtml(own.goods,'own')}</div>`}
  else if(STAB=='tst'){const r=ts.rights||{};x=`<div class=dim style="margin-bottom:6px">${o.tag} 部落 · 今日远程 ${sl.from_afar_left??'-'}/${sl.from_afar_a_day??'-'} 格${' · 存入'+(r.store===false?'✗':'✓')+' · 取出'+(r.take===false?'✗':'✓')}</div><div class=bag>${goodsHtml(ts.goods,'tribe',r.take!==false)}</div>`}
  else if(STAB=='tgr'){const it=tt.items||[];x=`<div class=dim style="margin-bottom:6px">${o.tag} 部落 · ${tt.take=='officers'?'仅干部可取':'成员可取'} · 你${tt.can_take?'可以':'不能'}取出</div>`+(it.length?`<div class=grid>${it.map(i=>card(i,'tstash')).join('')}</div>`:'<span class=dim>库里暂无装备</span>')+`<div class=dim style="margin:10px 0 4px;border-top:1px solid var(--line);padding-top:8px">存取记录（最近 12 条）</div>`+((tt.log||[]).map(l=>`<div class=dim style="font-size:12px">${(l.at||'').replace(/ CST.*$/,'').replace(/^\w+ /,'')} · ${l.who} ${l.did=='out'?'取出':'存入'} <span style="color:${RC[l.rarity]||'#ccc'}">${l.name_zh||l.name}</span> L${l.level}</div>`).join('')||'<span class=dim>无记录</span>')}
@@ -935,8 +939,8 @@ function rpOpen(src,id){const it=find(src,id);if(!it)return;const lv=it.level||0
  const ore=lv>15?(lv<24?'铜矿':lv<48?'铁矿':'星铁矿'):'';const need=it.durability_max-it.durability;const s=ST||{};
  const mt=(arm?'兽皮':'木头')+' + 石头'+(ore?' + '+ore:'');
  let h=`<h3 style="margin:0">🔧 修理 ${it.name_zh||it.name}</h3><div class=dim style="margin-top:4px">L${lv} · 耐久 ${it.durability}/${it.durability_max}，要补 ${need} 点${it.broken?' · 已损坏':''}</div>
- <div class=gsr><div class=t><b>金币修理</b><div class=dim style="font-size:12px">任何地方都能修 · 你有 ${s.coins??'-'} 币</div></div><button class="gold rpi" title="用金币修" aria-label="用金币修" onclick="rpGo(${id},'coins')">🪙</button></div>
- <div class=gsr><div class=t><b>材料 / 符尘修理</b><div class=dim style="font-size:12px">🪵 用 ${mt} · ☁️ 用符尘（你有 ${(s.bag||{}).dust??0}）<br>都要在营地铁匠或部落熔炉/工坊 2 格内${s.in_camp?'':' · <span class=down>现在不在营地</span>'}</div></div><span style="display:flex;gap:8px"><button class="gold rpi" title="用材料修" aria-label="用材料修" onclick="rpGo(${id},'materials')">🪵</button><button class="gold rpi" title="用符尘修" aria-label="用符尘修" onclick="rpGo(${id},'dust')">☁️</button></span></div>
+ <div class=gsr><div class=t><b>金币修理</b><div class=dim style="font-size:12px">任何地方都能修 · 你有 ${s.coins??'-'} 币</div></div><button class="gold rpi" title="用金币修" aria-label="用金币修" onclick="rpGo(${id},'coins')">💰</button></div>
+ <div class=gsr><div class=t><b>材料 / 符尘修理</b><div class=dim style="font-size:12px">🔨 用 ${mt} · ☁️ 用符尘（你有 ${(s.bag||{}).dust??0}）<br>都要在营地铁匠或部落熔炉/工坊 2 格内${s.in_camp?'':' · <span class=down>现在不在营地</span>'}</div></div><span style="display:flex;gap:8px"><button class="gold rpi" title="用材料修" aria-label="用材料修" onclick="rpGo(${id},'materials')">🔨</button><button class="gold rpi" title="用符尘修" aria-label="用符尘修" onclick="rpGo(${id},'dust')">☁️</button></span></div>
  <div class=dim style="font-size:11px">游戏不提供事先报价：金币、材料或符尘不够时不会扣任何东西，会弹出缺什么、缺多少；够的话直接修好并显示实际花费。</div>
  <div class=row><button onclick="closeDlg()">取消</button></div>`;openDlg(h)}
 async function bdClaim(n){if(!await ask(`领取 ${n} 个已完成的悬赏？\n需要在营地（不在营地会提示失败，不扣东西）。`))return;const r=await post({action:'bounty'});
