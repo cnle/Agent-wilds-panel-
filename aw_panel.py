@@ -694,6 +694,42 @@ input{background:rgba(0,0,0,.4);color:var(--txt);border:1px solid rgba(240,195,9
  #dlg{align-items:flex-end}#dlg>div{width:100vw;border-radius:16px 16px 0 0;max-height:85vh;padding:18px 16px 26px}
  #dlg button{padding:10px 16px;font-size:15px}input{width:46%}
 }
+
+#shc>:first-child{position:sticky;top:-16px;z-index:3;background:rgba(30,26,20,.98);margin-top:-6px;padding:8px 0;align-items:center!important;box-shadow:0 6px 8px -6px rgba(0,0,0,.6)}
+#shc>:first-child{top:-18px;background:rgba(38,32,24,.99)}
+#shc{position:relative;transition:opacity .15s}
+#shc.busy::after{content:'刷新中…';position:absolute;top:4px;right:60px;font-size:12px;color:#f0c35a;opacity:.85}
+#shc .qh{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}
+#shc .qt{font-size:19px;font-weight:700;color:#f0c35a}
+#shc button.qx{min-width:0;padding:4px 10px;background:none;border:1px solid rgba(240,195,90,.25)}
+#shc .qstat{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px}
+#shc .qstat>div{background:rgba(240,195,90,.07);border:1px solid rgba(240,195,90,.2);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column}
+#shc .qstat span{font-size:11.5px;color:#a99c86}
+#shc .qstat b{font-size:22px;color:#f0c35a}
+#shc .qstat i{font-style:normal;font-size:11px;color:#a99c86}
+#shc .qg2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+#shc .qs{background:rgba(10,9,8,.4);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:10px;display:flex;flex-direction:column;gap:6px}
+#shc .qg2 .qs{margin-bottom:0}
+#shc .qg2{margin-bottom:10px}
+#shc .qst{display:flex;justify-content:space-between;align-items:baseline;font-weight:700;color:#e8dcc2}
+#shc .qst span{font-weight:normal;font-size:11.5px;color:#a99c86}
+#shc .qn{font-size:16px;color:#f0c35a}
+#shc .qd{font-size:12px;color:#b9ad95}
+#shc .qf{display:flex;justify-content:space-between;align-items:center;margin-top:auto;gap:8px}
+#shc .qc{font-size:12.5px;color:#f0c35a}
+#shc button.qb{min-width:0;padding:5px 16px;background:linear-gradient(180deg,#d9a93f,#a97a22);color:#2a1f08;border:0;font-weight:700}
+#shc button.qb:disabled{background:rgba(80,70,55,.6);color:#8a806e}
+#shc .qsel{background:rgba(20,17,13,.8);color:var(--txt);border:1px solid rgba(240,195,90,.3);border-radius:8px;padding:6px 8px;max-width:100%}
+#shc .qwg{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+#shc .qw{background:rgba(240,195,90,.04);border:1px solid rgba(240,195,90,.15);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:5px}
+#shc .qwn{font-weight:700;color:#e8dcc2}
+#shc .qstep{display:flex;gap:4px;align-items:center}
+#shc .qstep button{min-width:0;width:28px;height:28px;padding:0;border-radius:7px}
+#shc .qstep button.qmax{width:auto;padding:0 10px;color:#f0c35a;border-color:#f0c35a}
+#shc .qstep input{width:56px;height:28px;text-align:center;background:rgba(20,17,13,.8);color:var(--txt);border:1px solid rgba(240,195,90,.3);border-radius:7px}
+#shc .qstat,#shc .qg2{grid-template-columns:minmax(0,1fr)}
+#shc .qw{background:linear-gradient(180deg,rgba(240,195,90,.07),rgba(240,195,90,.02))}
+#shc .qwn{font-size:15px}
 </style>
 <header><h1 style="display:flex;align-items:center;gap:8px"><img src="data:image/png;base64,__L128__" alt="" style="width:38px;height:38px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))">Agent Wilds 面板</h1><span id=dn title="荒野一天=现实2小时，夜晚 19:30–05:00（UTC+8 对齐）；夜晚魔王伤害/防御加成" style="font-size:13px;padding:3px 9px;border:1px solid var(--line);border-radius:12px;white-space:nowrap"></span><span id=tabs></span><button onclick="load()">刷新</button><span id=upd class=dim></span><div id=utabs></div></header>
 <main>
