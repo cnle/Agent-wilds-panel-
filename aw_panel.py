@@ -680,7 +680,7 @@ input{background:rgba(0,0,0,.4);color:var(--txt);border:1px solid rgba(240,195,9
 <header><h1 style="display:flex;align-items:center;gap:8px"><img src="data:image/png;base64,__L128__" alt="" style="width:38px;height:38px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7))">Agent Wilds 面板</h1><span id=dn title="荒野一天=现实2小时，夜晚 19:30–05:00（UTC+8 对齐）；夜晚魔王伤害/防御加成" style="font-size:13px;padding:3px 9px;border:1px solid var(--line);border-radius:12px;white-space:nowrap"></span><span id=tabs></span><button onclick="load()">刷新</button><span id=upd class=dim></span><div id=utabs></div></header>
 <main>
  <div class=card><h2>英雄 <span id=loc class=dim></span></h2><div id=hero></div></div>
- <div class=card><h2 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">穿戴装备 <span class=dim>点击可卸下</span><button class=gold style="margin-left:auto;font-size:13px;padding:3px 12px" onclick="gsOpen()">⚡ 一键穿戴</button></h2><div id=worn class=grid></div></div>
+ <div class=card><h2 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">穿戴装备 <span class=dim>点击可卸下</span><button style="margin-left:auto;font-size:13px;padding:3px 12px" onclick="unAll()">卸下</button><button class=gold style="font-size:13px;padding:3px 12px" onclick="gsOpen()">⚡ 穿上</button></h2><div id=worn class=grid></div></div>
  <div class=card><h2>装备背包 <span id=gbc class=dim></span></h2><div id=gbag></div></div>
  <div class=card><h2>仓库 <span id=stc class=dim></span></h2><div id=stabs class=stabs></div><div id=stash></div><div id=stash2></div></div>
  <div class="card full"><h2>物品与材料 <span class=dim>点击可出售</span></h2><div id=goods class=bag></div></div>
@@ -756,6 +756,14 @@ async function gsApply(n){let plan={};if(n==1){const au=gsAuto();for(const k in 
   const r=await post({action:'equip',item:id,slot:k});if(r.result&&r.result.success)ok.push(nm);else bad.push(nm+'：'+errText(r).slice(0,60))}
  await refreshState();const p1=(ST||{}).power;
  toast(`方案${n}：穿上 ${ok.length} 件${ok.length?'（'+ok.join('、')+'）':''}${p0!=null&&p1!=null?'，战力 '+p0+'→'+p1:''}${bad.length?'；未成功：'+bad.join('；'):''}`,bad.length?10000:6000)}
+// 2026-11-25 一键卸下：逐件 unequip（每部位 5 分钟冷却，背包满会失败）
+async function unAll(){const s=ST||{};if(!s||s.error)return;const W=Object.entries(s.worn||{}).filter(([k,v])=>v);
+ if(!W.length)return toast('身上没有装备',3000);
+ if(!await ask(`一键卸下 ${UNIT?'英雄 '+UNIT:'主角'} 身上 ${W.length} 件装备？\n卸下的装备会回到装备背包，背包满或部位冷却中会失败。`))return;
+ const ok=[],bad=[];const p0=s.power;
+ for(const [k,it] of W){const nm=SN[k]||SN[it.slot]||k;const r=await post({action:'unequip',slot:it.slot||k});if(r.result&&r.result.success)ok.push(nm);else bad.push(nm+'：'+errText(r).slice(0,60))}
+ await refreshState();const p1=(ST||{}).power;
+ toast(`卸下 ${ok.length} 件${ok.length?'（'+ok.join('、')+'）':''}${p0!=null&&p1!=null?'，战力 '+p0+'→'+p1:''}${bad.length?'；未成功：'+bad.join('；'):''}`,bad.length?10000:6000)}
 function card(it,src){const c=RC[it.rarity]||'#888';const w=it.worth&&it.worth.power!=null?` · 战力 ${it.worth.power}`:'';
  const vs=it.vs_worn&&it.vs_worn.power!=null?` · <span class=${it.vs_worn.power>=0?'up':'down'}>${it.vs_worn.power>=0?'+':''}${it.vs_worn.power}</span>`:'';
  const ak=akOf(it.id),gs=(src=='worn'||src=='bag'||src=='stash')?gsOf(it.id):[];return `<div class="it ${it.broken?'broken':''} ${ak?'akit':''} ${gs.length?'gsit':''}" style="border-left-color:${c}" onclick="detail('${src}',${it.id})"><div class=n style="color:${c}">${it.name_zh||it.name}${ak?`<span class=akb title="已用在深渊预设">🔥深渊 ${ak}</span>`:''}${gs.length?`<span class=gsb title="已设为穿戴方案">方案${gs.join('·')}</span>`:''}</div>
