@@ -1116,24 +1116,39 @@ function qmT(){const t=QM.temper||{};const id=+$('qmh').value;const x=(t.heroes|
 function qmTemper(){const id=+$('qmh').value;const x=(QM.temper.heroes||[]).find(h=>h.hero==id);qmGo('temper',{hero:id},x.next_deeds,'锤炼 '+$('qmh').selectedOptions[0].textContent.split(' · 锤炼')[0]+' 到 '+(x.level+1)+' 级')}
 function qmWare(i){const w=QM.wares[i];const q=Math.floor(+$('qmq'+i).value||0);if(q<1||q>100)return toast('数量 1–100');const tot=q*w.deeds;if(tot>(QM.deeds_banked||0))return toast('溢出战功不够');
  qmGo(w.item,{qty:q},tot,(w.name&&w.name.zh||w.item)+' '+(w.qty?q*w.qty+' 个':q+' 个'))}
-const SHZ={wheat_seed:'小麦种子',carrot_seed:'胡萝卜种子',corn_seed:'玉米种子',pumpkin_seed:'南瓜种子',herb:'草药',recipe_stew:'炖菜',recipe_pie:'馅饼',recipe_veggie_soup:'蔬菜汤',recipe_skewer:'烤串',recipe_meat_pie:'肉馅饼',recipe_bone_broth:'骨汤',recipe_hunter_sandwich:'猎人三明治',recipe_bread_soup:'面包汤',recipe_corn_wrap:'玉米卷',recipe_herb_loaf:'草药面包',recipe_frost_bread:'霜面包',recipe_marrow_bread:'骨髓面包',recipe_rations:'行军口粮'};let SH=null;
+const SHZ={wheat_seed:'小麦种子',carrot_seed:'胡萝卜种子',corn_seed:'玉米种子',pumpkin_seed:'南瓜种子',herb:'草药',recipe_stew:'炖菜',recipe_pie:'馅饼',recipe_veggie_soup:'蔬菜汤',recipe_skewer:'烤串',recipe_meat_pie:'肉馅饼',recipe_bone_broth:'骨汤',recipe_hunter_sandwich:'猎人三明治',recipe_bread_soup:'面包汤',recipe_corn_wrap:'玉米卷',recipe_herb_loaf:'草药面包',recipe_frost_bread:'霜面包',recipe_marrow_bread:'骨髓面包',recipe_rations:'行军口粮'};
+const SHI={wheat_seed:'🌾',carrot_seed:'🥕',corn_seed:'🌽',pumpkin_seed:'🎃',herb:'🌿'};
+const SHD={wheat_seed:'种出小麦，4 小麦做 1 面包',carrot_seed:'种出胡萝卜',corn_seed:'种出玉米',pumpkin_seed:'种出南瓜',herb:'做绷带、汤和药',recipe_stew:'3 肉 2 胡萝卜',recipe_pie:'2 南瓜 3 小麦',recipe_veggie_soup:'2 胡萝卜 2 玉米 1 草药',recipe_skewer:'2 烤肉 1 胡萝卜',recipe_meat_pie:'饱食 90 · 回血 70',recipe_bone_broth:'饱食 40 · 回血 110',recipe_hunter_sandwich:'攻击 +3% · 暴伤 +5%（8 战）',recipe_bread_soup:'经验 +5%（8 战）',recipe_corn_wrap:'闪避格挡 +2%（8 战）',recipe_herb_loaf:'毒抗 +12% · 对野兽 +6%',recipe_frost_bread:'火抗 +12% · 对魔物 +6%',recipe_marrow_bread:'暗抗 +12% · 对亡灵 +6%',recipe_rations:'攻击 +4% · 受伤 −4%'};
+const SHG=[['🍲 料理食谱','精致与丰盛菜',['recipe_stew','recipe_pie','recipe_veggie_soup','recipe_skewer','recipe_meat_pie','recipe_bone_broth']],['🥖 面包增益食谱','吃了带战斗增益',['recipe_hunter_sandwich','recipe_bread_soup','recipe_corn_wrap','recipe_herb_loaf','recipe_frost_bread','recipe_marrow_bread','recipe_rations']]];
+let SH=null,SHSEQ=0;const SHC={};
+function shShown(){return $('shw').style.display=='flex'}
 function closeSh(){$('shw').style.display='none'}
-async function openSh(){$('shw').style.display='flex';$('shc').innerHTML='<div class=dim>营地商店加载中…</div>';await loadSh()}
-async function loadSh(){let d;try{d=await j('/api/shop?acct='+ACCT)}catch(e){d=null}if(!d||d.error){$('shc').innerHTML='<div>'+((d&&d.error)||'加载失败')+'</div><div class=row><button onclick="closeSh()">关闭</button></div>';return}SH=d;renderSh()}
+async function openSh(){$('shw').style.display='flex';if(SHC[ACCT]){SH=SHC[ACCT];renderSh()}else{SH=null;$('shc').innerHTML='<div class=dim>营地商店加载中…</div>'}await loadSh()}
+async function loadSh(){const seq=++SHSEQ;let d;try{d=await j('/api/shop?acct='+ACCT)}catch(e){d=null}if(seq!=SHSEQ)return;
+ if(!d||d.error){if(!SH)$('shc').innerHTML='<div>'+((d&&d.error)||'加载失败')+'</div><div class=row><button onclick="closeSh()">关闭</button></div>';else toast('商店刷新失败');return}SHC[ACCT]=d;SH=d;if(shShown())renderSh()}
 function shCost(p,q){return Math.ceil(p*q-1e-9)}
-function renderSh(){const d=SH;const ic=d.in_camp;const C=d.coins||0;
- let h=`<div class=qh><div><div class=qt>🏪 营地商店</div><div class=dim style="font-size:12px">金币购买种子、草药和食谱（不卖面包）</div></div><button class=qx onclick="closeSh()">✕</button></div>
- <div class=qstat><div><span>金币</span><b>${(+C).toLocaleString()}</b></div><div><span>主角位置</span><b style="font-size:16px;color:${ic?'#6fd07a':'#e06c6c'}">${ic?'在营地':'不在营地'}</b>${ic?'':'<i>需回营地才能购买</i>'}</div></div>`;
- h+=`<div class=qs><div class=qst>🌱 种子与草药<span>按颗计价，整单向上取整</span></div>`;
- d.goods.forEach((g,i)=>{const have=(d.inv||{})[g.item];h+=`<div class=qw><div class=qwn>${SHZ[g.item]||g.item}${have?` <span class=dim style="font-size:12px">持有 ${have}</span>`:''}</div><div class=qd>${g.price} 金/个</div><div class=qf><input id=shq${i} type=number min=1 max=200 value=10 style="width:70px" oninput="shTot(${i})"> <span id=sht${i} class=qc>合计 ${shCost(g.price,10)} 金</span> <button class=qb ${ic?'':'disabled'} onclick="shBuy('${g.item}',${i})">购买</button></div></div>`});
- h+=`</div><div class=qs><div class=qst>📜 食谱卷轴<span>学会一次永久可做</span></div>`;
- d.recipes.forEach(r=>{h+=`<div class=qw><div class=qwn>${SHZ[r.item]||r.item}${r.known?' <span style="color:#6fd07a;font-size:12px">已学会</span>':''}</div><div class=qf><span class=qc>${r.price} 金</span> <button class=qb ${(!ic||r.price>C||r.known)?'disabled':''} onclick="shBuy('${r.item}',-1,${r.price})">购买</button></div></div>`});
- h+=`</div>`;$('shc').innerHTML=h}
-function shTot(i){const g=SH.goods[i];const q=Math.floor(+$('shq'+i).value||0);const t=shCost(g.price,q);const el=$('sht'+i);el.textContent='合计 '+t+' 金';el.style.color=t>(SH.coins||0)?'#e06c6c':''}
+function shMx(i){const g=SH.goods[i];return Math.max(0,Math.min(200,Math.floor((SH.coins||0)/g.price)))}
+function renderSh(){const d=SH;const ic=d.in_camp;const C=d.coins||0;const keep={};document.querySelectorAll('#shc input[id^=shq]').forEach(e=>keep[e.id]=e.value);
+ let h=`<div class=qh><div><div class=qt>🏪 营地商店</div><div class=dim style="font-size:12px">用金币购买种子、草药和食谱卷轴（面包需自己做或去市场买）</div></div><button class=qx onclick="closeSh()">✕</button></div>
+ <div class=qstat><div><span>金币</span><b>${(+C).toLocaleString()}</b></div><div><span>已学食谱</span><b>${d.recipes.filter(r=>r.known).length}/${d.recipes.length}</b></div><div><span>主角位置</span><b style="font-size:16px;color:${ic?'#6fd07a':'#e06c6c'}">${ic?'在营地':'不在营地'}</b>${ic?'':'<i>需回营地才能购买</i>'}</div></div>`;
+ h+=`<div class=qs><div class=qst>🌱 种子与草药<span>每次 1–200 个</span></div><div class=qwg>`;
+ d.goods.forEach((g,i)=>{const have=(d.inv||{})[g.item];const mx=shMx(i);const v=keep['shq'+i]||1;
+  h+=`<div class=qw><div class=qwn>${SHI[g.item]||''} ${SHZ[g.item]||g.item}</div><div class=qd>${SHD[g.item]||''} · ${g.price} 金/个${have?` · 持有 ${have}`:''}</div>
+  <div class=qstep><button onclick="shStep(${i},-1)">−</button><input id=shq${i} type=number min=1 max=${Math.max(1,mx)} value=${v} oninput="shTot(${i})"><button onclick="shStep(${i},1)">+</button><button class=qmax ${mx<1?'disabled':''} onclick="shMax(${i})">最大</button></div>
+  <div class=qf><span class=qc id=sht${i}></span><button class=qb ${(!ic||g.price>C)?'disabled':''} onclick="shBuy('${g.item}',${i})">购买</button></div></div>`});
+ h+=`</div></div>`;
+ const RM={};d.recipes.forEach(r=>RM[r.item]=r);
+ SHG.forEach(([t,sub,ks])=>{h+=`<div class=qs style="margin-top:10px"><div class=qst>${t}<span>${sub} · 学会永久可做</span></div><div class=qwg>`;
+  ks.forEach(k=>{const r=RM[k];if(!r)return;h+=`<div class=qw ${r.known?'style="opacity:.55"':''}><div class=qwn>📜 ${SHZ[k]||k}${r.known?' <span style="color:#6fd07a;font-size:12px;font-weight:400">✓ 已学会</span>':''}</div><div class=qd>${SHD[k]||''}</div><div class=qf><span class=qc>${r.price.toLocaleString()} 金</span><button class=qb ${(!ic||r.price>C||r.known)?'disabled':''} onclick="shBuy('${k}',-1,${r.price})">${r.known?'已学':'购买'}</button></div></div>`});
+  h+=`</div></div>`});
+ $('shc').innerHTML=h;d.goods.forEach((g,i)=>shTot(i))}
+function shTot(i){const g=SH.goods[i];const q=Math.floor(+$('shq'+i).value||0);const t=shCost(g.price,q);const el=$('sht'+i);el.textContent=`合计 ${t} 金`;el.style.color=t>(SH.coins||0)?'#e06c6c':''}
+function shStep(i,dv){const e=$('shq'+i);e.value=Math.max(1,Math.min(200,Math.floor(+e.value||0)+dv));shTot(i)}
+function shMax(i){const m=shMx(i);if(m<1)return toast('金币不够');$('shq'+i).value=m;shTot(i)}
 async function shBuy(item,i,price){let q=1,cost=price;if(i>=0){q=Math.floor(+$('shq'+i).value||0);if(q<1||q>200)return toast('数量 1–200');cost=shCost(SH.goods[i].price,q)}
- if(cost>(SH.coins||0))return toast('金币不够');if(!await ask(`花约 ${cost} 金币购买 ${SHZ[item]||item}${i>=0?' ×'+q:''}？`))return;
+ if(cost>(SH.coins||0))return toast('金币不够');if(!await ask(`花 ${cost} 金币购买 ${SHZ[item]||item}${i>=0?' ×'+q:''}？`))return;
  const r=await j('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acct:ACCT,body:{action:'shop',item,qty:q}})});
- const x=r.result||r;if(x&&x.success){toast('购买成功'+(x.coins!=null?' · 剩余金币 '+x.coins:''),5000);await loadSh();refreshState&&refreshState()}else toast('购买失败：'+errText(r),7000)}
+ const x=r.result||r;if(x&&x.success){toast('购买成功 · 花费 '+cost+' 金',5000);await loadSh();refreshState&&refreshState()}else toast('购买失败：'+errText(r),7000)}
 async function qmGo(item,extra,cost,label){if(!await ask(`用 ${cost} 溢出战功兑换 ${label}？`))return;
  const r=await j('/api/act',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acct:ACCT,body:Object.assign({action:'requisition',item},extra||{})})});
  const x=r.result||r;if(x&&x.success){const got=x.got?Object.entries(x.got).map(([k,v])=>k+'×'+v).join('、'):'';toast(`兑换成功 · 花费 ${x.spent??cost} 战功${got?' · 得到 '+got:''} · 剩余 ${x.deeds_banked??''}`,6000);await loadQm();refreshState&&refreshState()}
